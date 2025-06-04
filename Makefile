@@ -3,10 +3,10 @@ CXXFLAGS = -std=c++20 -I/usr/include -I/usr/local/include/glm -Iinclude
 LDFLAGS = -L/usr/lib -lvulkan -lglfw
 
 DEBUG_FLAGS = -g 
-RELEASE_FLAGS = -O0 -Wall -Wshadow -fsanitize=undefined,address
+RELEASE_FLAGS = -O0 -Wall -Wshadow #-fsanitize=undefined,address
 #-Wextra -Wpedantic -Wshadow -fsanitize=undefined,address
 
-SOURCES = main.cpp vk_engine.cpp
+SOURCES = main.cpp src/camera.cpp #vk_engine.cpp
 OBJECTS = $(SOURCES:.cpp=.o)
 
 EXECUTABLE = final
