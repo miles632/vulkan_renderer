@@ -165,8 +165,8 @@ private:
 
     bool framebufferResized = false;
 
-    glm::vec3 cameraPos = {0.0f, 0.0f, 3.0f};
-    glm::vec3 cameraFront = {0.0, 0.0, -1.0f};
+    glm::vec3 cameraPos = {3.0f, 0.0f, 0.0f};
+    glm::vec3 cameraFront = {-1.0f, 0.0f, 0.0f};
     const glm::vec3 cameraPitch = {0.0f, 1.0f, 0.0f};
     //glm::vec3 camera_center = {0.0f, 0.0f, 0.0f};
     const float cameraSpeed = 5.0f;
@@ -931,13 +931,12 @@ private:
         //VkDeviceSize bufferSize = sizeof(uint16_t) * indices.size();
         VkDeviceSize currentOffset = 0;
 
-
         for (auto& mInfo : meshesInfo) {
             const auto& mesh = meshes[mInfo.indexInto];
             mInfo.indexCount = mesh.indices.size();
             mInfo.indexOffsetBytes = currentOffset;
 
-            currentOffset += mInfo.indexCount * sizeof(uint16_t);
+            currentOffset += mInfo.indexCount * sizeof(uint32_t);
         }
 
         VkDeviceSize bufferSize = currentOffset;
@@ -955,7 +954,7 @@ private:
             memcpy(
                 static_cast<char*>(data) + mInfo.indexOffsetBytes,
                 meshes[mInfo.indexInto].indices.data(),
-                mInfo.indexCount * sizeof(uint16_t)
+                mInfo.indexCount * sizeof(uint32_t)
                 );
         }
         //memcpy(data, indices.data(), (size_t) bufferSize);
@@ -1405,7 +1404,7 @@ private:
             VkBuffer vertexBuffers[] = {vertexBuffer};
 
             vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, (VkDeviceSize[]){0});
-            vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+            vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 
 
 
@@ -1429,7 +1428,7 @@ private:
             //vkCmdDraw(commandBuffer, static_cast<uint32_t>(vertices.size()), 1, 0, 0);
             //vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
             for (const MeshInfo& m : meshesInfo) {
-                vkCmdDrawIndexed(commandBuffer, m.indexCount, 1, m.vertexOffsetBytes / sizeof(uint16_t), m.vertexOffsetBytes / sizeof(Vertex), 0);
+                vkCmdDrawIndexed(commandBuffer, m.indexCount, 1, m.vertexOffsetBytes / sizeof(uint32_t), m.vertexOffsetBytes / sizeof(Vertex), 0);
             }
 
             vkCmdEndRenderPass(commandBuffer);
@@ -1761,15 +1760,15 @@ private:
         for (const auto& shape : shapes) {
             for (const auto& index : shape.mesh.indices) {
                 glm::vec3 pos = {
-                    attrib.vertices[3 * index.vertex_index + 0],
-                    attrib.vertices[3 * index.vertex_index + 1],
+                    attrib.vertices[3 * index.vertex_index + 0], // multiplication by 3 because each vertex is stored
+                    attrib.vertices[3 * index.vertex_index + 1], // as 3 floats
                     attrib.vertices[3 * index.vertex_index + 2]
                 };
 
                 glm::vec2 uv = {0.0f, 0.0f};
                 if (index.texcoord_index >= 0) {
                     uv.x = attrib.texcoords[2 * index.texcoord_index + 0];
-                    uv.y = attrib.texcoords[2 * index.texcoord_index + 1];
+                    uv.y = 1.0f - attrib.texcoords[2 * index.texcoord_index + 1];
                 }
 
                 std::string key = std::to_string(pos.x) + "|" + std::to_string(pos.y) + "|" + std::to_string(pos.z) +
@@ -1787,59 +1786,6 @@ private:
 
         return true;
     }
-
-    /*
-    static bool loadMesh(const std::string& fpath, Mesh& outputMesh) {
-        std::ifstream file(fpath);
-        if (!file.is_open()) return false;
-
-        std::vector<glm::vec2> texCoords;
-        std::vector<glm::vec3> positions;
-        std::unordered_map<std::string, uint16_t> uniqueVerts;
-
-        std::string line;
-        while (std::getline(file, line)) {
-            std::istringstream ss(line);
-            std::string prefix;
-            ss >> prefix;
-
-            if (prefix == "v") {
-                float x, y, z;
-                ss >> x >> y >> z;
-                positions.push_back(glm::vec3(x, y, z));
-            } else if (prefix == "vt") {
-                float u, v;
-                ss >> u >> v;
-                texCoords.push_back(glm::vec2(u, v));
-            } else if (prefix == "f") {
-                for (int i = 0; i < 3; ++i) { // assuming triangles only
-                    std::string vertex;
-                    ss >> vertex;
-
-                    std::istringstream vs(vertex);
-                    std::string indexStr;
-                    std::getline(vs, indexStr, '/');
-                    int index = std::stoi(indexStr) - 1;
-
-                    glm::vec3 pos = positions[index];
-                    std::string key = std::to_string(pos.x) + "|" + std::to_string(pos.y) + "|" + std::to_string(pos.z);
-
-                    if (uniqueVerts.count(key) == 0) {
-                        uint16_t newIndex = outputMesh.vertices.size();
-                        uniqueVerts[key] = newIndex;
-                        outputMesh.vertices.push_back(Vertex{pos, glm::vec3(1.0f, 0.0f, 0.0f)}); // white
-                    }
-
-                    outputMesh.indices.push_back(uniqueVerts[key]);
-                }
-            }
-        }
-
-        return true;
-    }
-    */
-
-
 };
 
 int main() {

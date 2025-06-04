@@ -1,4 +1,5 @@
 #include <glm/glm.hpp>
+#include <GLFW/glfw3.h>
 
 class Camera {
     glm::vec3 pos = {0.0f, 0.0f, 3.0f};
