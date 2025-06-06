@@ -27,13 +27,13 @@ void Camera::mouse(float xOffset, float yOffset, float sensitivity) {
     yOffset *= sensitivity;
 
     yaw += xOffset;
-    pitch -= yOffset;
+    pitch += yOffset;
 
     // clamp
     if (pitch > 89.0f)
         pitch = 89.0f;
-    if (yaw > 89.0f)
-        yaw = 89.0f;
+    if (pitch < -89.0f)
+        pitch = -89.0f;
 
     // recompute the front vector
     updateFront();
@@ -46,5 +46,6 @@ void Camera::updateFront() {
     dir.y = sin(glm::radians(pitch));
     dir.z = cos(glm::radians(pitch)) * sin(glm::radians(yaw));
 
-    glm::normalize(dir);
+    front = glm::normalize(dir);
 }
+

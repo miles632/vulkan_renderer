@@ -165,15 +165,9 @@ private:
 
     bool framebufferResized = false;
 
-    glm::vec3 cameraPos = {3.0f, 0.0f, 0.0f};
-    glm::vec3 cameraFront = {-1.0f, 0.0f, 0.0f};
-    const glm::vec3 cameraPitch = {0.0f, 1.0f, 0.0f};
-    //glm::vec3 camera_center = {0.0f, 0.0f, 0.0f};
-    const float cameraSpeed = 5.0f;
+    Camera camera;
 
     float lastFrameT = 0.0f;
-
-    bool keys[1024] = {false};
 
     void initWindow() {
         glfwInit();
@@ -183,7 +177,11 @@ private:
 
         window = glfwCreateWindow(WIDTH, HEIGHT, "thulean renderer", nullptr, nullptr);
         glfwSetWindowUserPointer(window, this);
+
         glfwSetKeyCallback(window, &keyInputCallback);
+        glfwSetCursorPosCallback(window, &mouseInputCallback);
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+
         glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
     }
 
@@ -201,6 +199,7 @@ private:
         createDepthResources();
         createFrameBuffers();
         createCommandPool();
+        createCamera();
         loadMeshes();
         createTextureImage();
         createTextureImageView();
@@ -221,7 +220,8 @@ private:
             lastFrameT = currentFrameT;
 
             glfwPollEvents();
-            input(deltaTime);
+
+            camera.move(deltaTime);
             drawFrame();
         }
 
@@ -263,17 +263,6 @@ private:
         VkSemaphore signalSemaphores[] = {renderFinishedSemaphores[currentFrame]};
         submitInfo.signalSemaphoreCount = 1;
         submitInfo.pSignalSemaphores = signalSemaphores;
-
-        //if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]) != VK_SUCCESS ) {
-        //    throw std::runtime_error("failed submitting to queue");
-        //}
-
-        /*
-        assert(submitInfo.pCommandBuffers != nullptr);
-        assert(submitInfo.commandBufferCount > 0);
-        VkResult res = vkEndCommandBuffer(commandBuffers[currentFrame]);
-        assert(res == VK_SUCCESS);
-        */
 
         VkResult result = vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]);
         if (result != VK_SUCCESS) {
@@ -427,26 +416,35 @@ private:
 
     static void keyInputCallback(GLFWwindow *window, int key, int scancode, int action, int mods) {
         Application* app = static_cast<Application*>(glfwGetWindowUserPointer(window));
-
-
         if (key >= 0 && key < 1024) {
             if (action == GLFW_PRESS) {
-                app->keys[key] = true;
+                app->camera.keys[key] = true;
             } else if (action == GLFW_RELEASE) {
-                app->keys[key] = false;
+                app->camera.keys[key] = false;
             }
         }
     }
 
-    void input(float deltaT) {
-        if (keys[GLFW_KEY_W])
-            cameraPos += cameraSpeed * cameraFront * deltaT;
-        if (keys[GLFW_KEY_S])
-            cameraPos -= cameraSpeed * cameraFront * deltaT;
-        if (keys[GLFW_KEY_A])
-            cameraPos -= glm::normalize(glm::cross(cameraFront, cameraPitch)) * cameraSpeed * deltaT;
-        if (keys[GLFW_KEY_D])
-            cameraPos += glm::normalize(glm::cross(cameraFront, cameraPitch)) * cameraSpeed * deltaT;
+    static void mouseInputCallback(GLFWwindow *window, double xpos, double ypos) {
+        Application* app = static_cast<Application*>(glfwGetWindowUserPointer(window));
+
+        static float lastX = 400.0f;
+        static float lastY = 300.0f;
+        static bool firstMouse = true;
+
+        if (firstMouse) {
+            lastX = xpos;
+            lastY = ypos;
+            firstMouse = false;
+        }
+
+        float xOffset = xpos - lastX;
+        float yOffset = lastY - ypos;
+
+        lastX = xpos;
+        lastY = ypos;
+
+        app->camera.mouse(xOffset, yOffset);
     }
 
     void createSurface() {
@@ -1152,8 +1150,7 @@ private:
 
         ubo.model = glm::mat4(1.0f);
 
-        //ubo.view = glm::lookAt(camera_pos, camera_center, glm::vec3(0.0f, 0.0f, 1.0f));
-        ubo.view = glm::lookAt(cameraPos, cameraPos + cameraFront, cameraPitch);
+        ubo.view = camera.getViewMatrix();
 
         ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float) swapChainExtent.height, 0.1f, 50.0f);
 
@@ -1161,6 +1158,10 @@ private:
         ubo.proj[1][1] *= -1;
 
         memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
+    }
+
+    void createCamera() {
+        this->camera = Camera{};
     }
 
     void createDescriptorPool() {
