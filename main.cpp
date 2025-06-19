@@ -46,7 +46,14 @@ const std::vector<const char*> validationLayers = {
 };
 
 const std::vector<const char*> deviceExtensions = {
-    VK_KHR_SWAPCHAIN_EXTENSION_NAME
+    VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+    VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
+    VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
+    VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
+    VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
+    VK_KHR_SPIRV_1_4_EXTENSION_NAME,
+    VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME,
+    VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME
 };
 
 #ifdef NDEBUG
@@ -186,7 +193,7 @@ private:
 
         glfwSetKeyCallback(window, &keyInputCallback);
         glfwSetCursorPosCallback(window, &mouseInputCallback);
-        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 
         glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
     }
@@ -393,11 +400,11 @@ private:
     void createInstance() {
         VkApplicationInfo appInfo{};
         appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-        appInfo.pApplicationName = "Hello Triangle";
-        appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
+        appInfo.pApplicationName = "Ray tracing demo";
+        appInfo.applicationVersion = VK_MAKE_VERSION(1, 2, 0);
         appInfo.pEngineName = "No Engine";
-        appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-        appInfo.apiVersion = VK_API_VERSION_1_0;
+        appInfo.engineVersion = VK_MAKE_VERSION(1, 2, 0);
+        appInfo.apiVersion = VK_API_VERSION_1_2;
 
         VkInstanceCreateInfo createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
@@ -566,16 +573,39 @@ private:
 
         bool extensionsSupported = checkDeviceExtensionSupport(device);
 
-        VkPhysicalDeviceFeatures supportedFeatures;
-        vkGetPhysicalDeviceFeatures(device, &supportedFeatures);
+        // VkPhysicalDeviceFeatures supportedFeatures;
+        // vkGetPhysicalDeviceFeatures(device, &supportedFeatures);
+        VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtPipelineFeatures{};
+        rtPipelineFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
+
+        VkPhysicalDeviceAccelerationStructureFeaturesKHR accelStructFeatures{};
+        accelStructFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+        accelStructFeatures.pNext = &rtPipelineFeatures;
+
+        VkPhysicalDeviceBufferDeviceAddressFeatures bufferAddressFeatures{};
+        bufferAddressFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
+        bufferAddressFeatures.pNext = &accelStructFeatures;
+
+        VkPhysicalDeviceFeatures2 features2{};
+        features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        features2.pNext = &bufferAddressFeatures;
+
+        vkGetPhysicalDeviceFeatures2(device, &features2);
 
         bool swapChainAdequate = false;
         if (extensionsSupported) {
             SwapChainSupportDetails swapChainSupport = querySwapChainSupport(device);
             swapChainAdequate = !swapChainSupport.formats.empty() && !swapChainSupport.presentModes.empty();
         }
+        //return indices.isComplete() && extensionsSupported && swapChainAdequate && supportedFeatures.samplerAnisotropy
 
-        return indices.isComplete() && extensionsSupported && swapChainAdequate && supportedFeatures.samplerAnisotropy;
+        return indices.isComplete() &&
+                extensionsSupported &&
+                swapChainAdequate &&
+                features2.features.samplerAnisotropy &&
+                bufferAddressFeatures.bufferDeviceAddress &&
+                accelStructFeatures.accelerationStructure &&
+                rtPipelineFeatures.rayTracingPipeline;
     }
 
     bool checkDeviceExtensionSupport(VkPhysicalDevice device) {
@@ -614,9 +644,33 @@ private:
             queueCreateInfos.push_back(queueCreateInfo);
         }
 
+        /*
         VkPhysicalDeviceFeatures deviceFeatures{};
         deviceFeatures.samplerAnisotropy = VK_TRUE;
         deviceFeatures.sampleRateShading = VK_TRUE;
+        */
+
+        // ray tracing pipeline features
+        VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtPipelineFeatures{};
+        rtPipelineFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
+        rtPipelineFeatures.rayTracingPipeline = VK_TRUE;
+
+        VkPhysicalDeviceAccelerationStructureFeaturesKHR accelStructFeatures{};
+        accelStructFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+        accelStructFeatures.accelerationStructure = VK_TRUE;
+        accelStructFeatures.pNext = &rtPipelineFeatures;
+
+        VkPhysicalDeviceBufferDeviceAddressFeatures bufferAddressFeatures{};
+        bufferAddressFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
+        bufferAddressFeatures.bufferDeviceAddress = VK_TRUE;
+        bufferAddressFeatures.pNext = &accelStructFeatures;
+
+        VkPhysicalDeviceFeatures2 features2{};
+        features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        features2.features.samplerAnisotropy = VK_TRUE;
+        features2.features.sampleRateShading = VK_TRUE;
+        features2.pNext = &bufferAddressFeatures;
+        //
 
         VkDeviceCreateInfo createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -624,7 +678,8 @@ private:
         createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
         createInfo.pQueueCreateInfos = queueCreateInfos.data();
 
-        createInfo.pEnabledFeatures = &deviceFeatures;
+        createInfo.pNext = &features2;
+        createInfo.pEnabledFeatures = nullptr;
 
         createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
         createInfo.ppEnabledExtensionNames = deviceExtensions.data();
