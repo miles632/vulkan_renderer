@@ -1,5 +1,9 @@
+#pragma once
+
 #include <glm/glm.hpp>
 #include <GLFW/glfw3.h>
+
+#include <glm/ext/matrix_transform.hpp>
 
 struct Camera {
     float yaw = -90.0f;

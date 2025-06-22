@@ -1,7 +1,5 @@
 #include "camera.h"
 
-#include <glm/ext/matrix_transform.hpp>
-
 void Camera::move(float dT) {
     if (keys[GLFW_KEY_W])
         pos += speed * front * dT;

@@ -6,7 +6,7 @@ DEBUG_FLAGS = -g
 RELEASE_FLAGS = -O0 -Wall -Wshadow #-fsanitize=undefined,address
 #-Wextra -Wpedantic -Wshadow -fsanitize=undefined,address
 
-SOURCES = main.cpp src/camera.cpp #vk_engine.cpp
+SOURCES = main.cpp src/camera.cpp src/blas.cpp src/tlas.cpp src/renderer.cpp src/globals.cpp#vk_engine.cpp
 OBJECTS = $(SOURCES:.cpp=.o)
 
 EXECUTABLE = final

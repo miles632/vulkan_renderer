@@ -1,3 +1,12 @@
+#pragma once
+
+#include <array>
+#include <cstdint>
+#include <vector>
+#include <glm/glm.hpp>
+#include <glm/mat4x4.hpp>
+#include <vulkan/vulkan.h>
+
 struct Vertex {
     glm::vec3 pos;
     glm::vec3 color;
@@ -42,6 +51,8 @@ struct UniformBufferObject {
 struct Mesh {
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
+
+
 };
 
 struct MeshInfo {
