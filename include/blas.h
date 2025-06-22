@@ -1,7 +1,7 @@
 #pragma once
 
+#include "vertex.h"
 #include "vulkan/vulkan.h"
-#include <vector>
 
 struct BlasInput {
     VkDeviceAddress vertexAddress;

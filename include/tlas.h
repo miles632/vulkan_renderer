@@ -2,15 +2,17 @@
 
 #include "vulkan/vulkan.h"
 #include <vector>
+#include <renderer.h>
 
 struct TlasInstance {
     VkTransformMatrixKHR transform;
     uint32_t instanceCustomIndex : 24;
     uint32_t mask : 8;
     uint32_t instanceShaderBindingTableRecordOffset : 24;
-    uint32_t flags;
+    uint32_t flags : 8;
     uint64_t blasDeviceAddress;
 };
+
 
 class Tlas {
 public:
@@ -21,7 +23,9 @@ public:
     void create(VkDevice device,
                 VkPhysicalDevice physicalDevice,
                 VkCommandBuffer cmdBuf,
-                const std::vector<TlasInstance>& instances);
+                const std::vector<TlasInstance>& instances,
+                Renderer* state
+                );
 
     void destroy(VkDevice device);
 };
