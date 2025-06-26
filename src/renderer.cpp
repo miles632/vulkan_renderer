@@ -246,10 +246,10 @@ void Renderer::createInstance() {
     VkApplicationInfo appInfo{};
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
     appInfo.pApplicationName = "Ray tracing demo";
-    appInfo.applicationVersion = VK_MAKE_VERSION(1, 2, 0);
+    appInfo.applicationVersion = VK_MAKE_VERSION(1, 3, 0);
     appInfo.pEngineName = "No Engine";
-    appInfo.engineVersion = VK_MAKE_VERSION(1, 2, 0);
-    appInfo.apiVersion = VK_API_VERSION_1_2;
+    appInfo.engineVersion = VK_MAKE_VERSION(1, 3, 0);
+    appInfo.apiVersion = VK_API_VERSION_1_3;
 
     VkInstanceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
@@ -513,7 +513,6 @@ void Renderer::createLogicalDevice() {
     features2.features.samplerAnisotropy = VK_TRUE;
     features2.features.sampleRateShading = VK_TRUE;
     features2.pNext = &bufferAddressFeatures;
-    //
 
     VkDeviceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -537,6 +536,22 @@ void Renderer::createLogicalDevice() {
     if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS) {
         throw std::runtime_error("failed to create logical device!");
     }
+
+    //load ray tracing related function pointers
+    pfnCreateAccelerationStructureKHR =
+        (PFN_vkCreateAccelerationStructureKHR)vkGetDeviceProcAddr(device, "vkCreateAccelerationStructureKHR");
+    pfnGetAccelerationStructureBuildSizesKHR =
+        (PFN_vkGetAccelerationStructureBuildSizesKHR)vkGetDeviceProcAddr(device, "vkGetAccelerationStructureBuildSizesKHR");
+    pfnCmdBuildAccelerationStructuresKHR =
+        (PFN_vkCmdBuildAccelerationStructuresKHR) vkGetDeviceProcAddr(device, "vkCmdBuildAccelerationStructuresKHR");
+    pfnDestroyAccelerationStructureKHR =
+        (PFN_vkDestroyAccelerationStructureKHR) vkGetDeviceProcAddr(device, "vkDestroyAccelerationStructureKHR");
+    pfnGetBufferDeviceAddressKHR =
+        (PFN_vkGetBufferDeviceAddressKHR) vkGetDeviceProcAddr(device, "vkGetBufferDeviceAddressKHR");
+    pfnGetAccelerationStructureDeviceAddressKHR =
+        (PFN_vkGetAccelerationStructureDeviceAddressKHR) vkGetDeviceProcAddr(device, "vkGetAccelerationStructureDeviceAddressKHR");
+
+
 
     vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &graphicsQueue);
     vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &presentQueue);
@@ -803,7 +818,7 @@ void Renderer::createBuffer(VkDeviceSize size, VkBufferUsageFlags usageFlags, Vk
     allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, propertyFlags);
 
     if (vkAllocateMemory(device, &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS) {
-        throw std::runtime_error("failed allocating memory for vertex buffer");
+        throw std::runtime_error("failed allocating memory for buffer");
     }
 
     vkBindBufferMemory(device, buffer, bufferMemory, 0);

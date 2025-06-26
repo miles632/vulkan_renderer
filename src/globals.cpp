@@ -24,3 +24,10 @@ const bool enableValidationLayers = false;
 #else
 const bool enableValidationLayers = true;
 #endif
+
+extern PFN_vkCreateAccelerationStructureKHR pfnCreateAccelerationStructureKHR = nullptr;
+extern PFN_vkGetAccelerationStructureBuildSizesKHR pfnGetAccelerationStructureBuildSizesKHR = nullptr;
+extern PFN_vkCmdBuildAccelerationStructuresKHR pfnCmdBuildAccelerationStructuresKHR = nullptr;
+extern PFN_vkDestroyAccelerationStructureKHR pfnDestroyAccelerationStructureKHR = nullptr;
+extern PFN_vkGetBufferDeviceAddressKHR pfnGetBufferDeviceAddressKHR = nullptr;
+extern PFN_vkGetAccelerationStructureDeviceAddressKHR pfnGetAccelerationStructureDeviceAddressKHR = nullptr;

@@ -132,7 +132,7 @@ void Tlas::create(VkDevice device,
 
     const VkAccelerationStructureBuildRangeInfoKHR* pBuildRangeInfos[] = { &rangeInfo };
 
-    vkCmdBuildAccelerationStructuresKHR(
+    pfnCmdBuildAccelerationStructuresKHR(
         cmdBuf,
         1,
         &geometryInfo,
