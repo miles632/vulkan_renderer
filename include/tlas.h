@@ -21,7 +21,6 @@ public:
     VkBuffer buffer = VK_NULL_HANDLE;
 
     void create(VkDevice device,
-                VkPhysicalDevice physicalDevice,
                 VkCommandBuffer cmdBuf,
                 const std::vector<TlasInstance>& instances,
                 Renderer* state

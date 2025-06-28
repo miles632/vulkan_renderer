@@ -2,6 +2,7 @@
 
 #include "vertex.h"
 #include "vulkan/vulkan.h"
+#include "renderer.h"
 
 struct BlasInput {
     VkDeviceAddress vertexAddress;
@@ -19,9 +20,9 @@ public:
     VkBuffer buffer = VK_NULL_HANDLE;
 
     void create(VkDevice device,
-                VkPhysicalDevice physicalDevice,
                 VkCommandBuffer cmdBuf,
-                const BlasInput& input);
+                const BlasInput& input,
+                Renderer* state);
 
     void destroy(VkDevice device);
 };
