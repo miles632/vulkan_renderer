@@ -2,11 +2,11 @@
 
 #include "../include/blas.h"
 #include "../include/globals.h"
+#include "../include/renderer.h"
 
 void Blas::create(VkDevice device,
-                  VkCommandBuffer cmdBuf,
                   const BlasInput& input,
-                  Renderer* state) {
+                  Renderer& state) {
 
     VkAccelerationStructureGeometryKHR geometry{};
     geometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
@@ -21,13 +21,18 @@ void Blas::create(VkDevice device,
     geometry.geometry.triangles.indexData.deviceAddress = input.indexAddress;
     geometry.geometry.triangles.transformData.deviceAddress = 0;
 
+    VkAccelerationStructureGeometryKHR* geometries[] = { &geometry };
+
+
     VkAccelerationStructureBuildGeometryInfoKHR buildInfo{};
     buildInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
     buildInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
     buildInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
     buildInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
     buildInfo.geometryCount = 1;
+    buildInfo.ppGeometries = nullptr;
     buildInfo.pGeometries = &geometry;
+    buildInfo.pNext = NULL;
 
     VkAccelerationStructureBuildSizesInfoKHR buildSizes{};
     buildSizes.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
@@ -42,10 +47,10 @@ void Blas::create(VkDevice device,
         &buildSizes
         );
 
-    state->createBuffer(
+    state.createBuffer(
         buildSizes.accelerationStructureSize,
         VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT ,
         buffer,
         memory
         );
@@ -58,11 +63,15 @@ void Blas::create(VkDevice device,
     createInfo.offset = 0;
     createInfo.createFlags = 0;
     createInfo.deviceAddress = 0;
-    pfnCreateAccelerationStructureKHR(device, &createInfo, nullptr, &handle);
+
+    if (pfnCreateAccelerationStructureKHR(device, &createInfo, nullptr, &handle) != VK_SUCCESS) {
+        throw std::runtime_error("failed creating BLAS");
+    }
+    buildInfo.dstAccelerationStructure = handle;
 
     VkBuffer scratchBuffer;
     VkDeviceMemory scratchMemory;
-    state->createBuffer(
+    state.createBuffer(
         buildSizes.buildScratchSize,
         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
@@ -73,9 +82,8 @@ void Blas::create(VkDevice device,
     VkBufferDeviceAddressInfoKHR scratchAddrInfo{};
     scratchAddrInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
     scratchAddrInfo.buffer = scratchBuffer;
-    VkDeviceAddress scratchAddress = vkGetBufferDeviceAddress(device, &scratchAddrInfo);
+    VkDeviceAddress scratchAddress = pfnGetBufferDeviceAddressKHR(device, &scratchAddrInfo);
 
-    buildInfo.dstAccelerationStructure = handle;
     buildInfo.scratchData.deviceAddress = scratchAddress;
 
     VkAccelerationStructureBuildRangeInfoKHR rangeInfo{};
@@ -86,5 +94,21 @@ void Blas::create(VkDevice device,
 
     const VkAccelerationStructureBuildRangeInfoKHR* pRangeInfos[] = { &rangeInfo };
 
-    pfnCmdBuildAccelerationStructuresKHR(cmdBuf, 1, &buildInfo, pRangeInfos);
+    /*
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmdBuf, &beginInfo);
+    */
+
+    if (scratchAddress == 0) {
+        throw std::runtime_error("fuck, scratch address");
+    }
+
+    VkCommandBuffer cmdBuf_ = state.beginSingleTimeCommands();
+    pfnCmdBuildAccelerationStructuresKHR(cmdBuf_, 1, &buildInfo, pRangeInfos);
+    state.endSingleTimeCommands(cmdBuf_);
+
+    //vkEndCommandBuffer(cmdBuf);
 }
+

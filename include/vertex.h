@@ -7,6 +7,8 @@
 #include <glm/mat4x4.hpp>
 #include <vulkan/vulkan.h>
 
+#include "globals.h"
+
 struct Vertex {
     glm::vec3 pos;
     glm::vec3 color;
@@ -25,7 +27,7 @@ struct Vertex {
         std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions{};
         attributeDescriptions[0].binding = 0;
         attributeDescriptions[0].location = 0;
-        attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
+        attributeDescriptions[0].format = VERTEX_FORMAT;
         attributeDescriptions[0].offset = offsetof(Vertex, pos);
 
         attributeDescriptions[1].binding = 0;
@@ -51,8 +53,6 @@ struct UniformBufferObject {
 struct Mesh {
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
-
-
 };
 
 struct MeshInfo {
@@ -64,6 +64,8 @@ struct MeshInfo {
     // index for the meshes vector in the application struct
     uint32_t indexInto;
 };
+
+
 /*
 const std::vector<Vertex> vertices = {
     {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},

@@ -43,9 +43,10 @@
 #include "stb_image.h"
 */
 
+#include "blas.h"
 #include "tiny_obj_loader.h"
 #include "stb_image.h"
-
+#include "tlas.h"
 
 
 /*
@@ -130,9 +131,11 @@ private:
     VkFormat swapChainImageFormat;
     VkExtent2D swapChainExtent;
 
+public:
     VkDevice device;
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
 
+private:
     VkQueue graphicsQueue;
     VkQueue presentQueue;
 
@@ -146,9 +149,11 @@ private:
 
     VkBuffer vertexBuffer;
     VkDeviceMemory vertexBufferMemory;
+    VkDeviceAddress vertexBufferAddress;
 
     VkBuffer indexBuffer;
     VkDeviceMemory indexBufferMemory;
+    VkDeviceAddress indexBufferAddress;
 
     std::vector<VkBuffer> uniformBuffers;
     std::vector<VkDeviceMemory> uniformBuffersMemory;
@@ -185,14 +190,19 @@ private:
 
     float lastFrameT = 0.0f;
 
+    Tlas tlas;
+    Blas blas;
+
     void initWindow();
     void initVulkan();
     void mainLoop();
     void drawFrame();
 
+public:
     VkCommandBuffer beginSingleTimeCommands();
     void endSingleTimeCommands(VkCommandBuffer commandBuffer);
 
+private:
     void cleanup();
     void createInstance();
 
@@ -288,6 +298,9 @@ private:
     bool hasStencilComponent(VkFormat format);
     VkSampleCountFlagBits getMaxUsableSampleCount();
     void createColorResources();
+
+    void createAccelerationStructures();
+
     void loadMeshes();
     static bool loadMesh(const std::string& fpath, Mesh& outputMesh);
 };

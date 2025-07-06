@@ -2,14 +2,16 @@
 
 #include "vulkan/vulkan.h"
 #include <vector>
-#include <renderer.h>
+//#include <renderer.h>
+
+struct Renderer;
 
 struct TlasInstance {
     VkTransformMatrixKHR transform;
     uint32_t instanceCustomIndex : 24;
     uint32_t mask : 8;
     uint32_t instanceShaderBindingTableRecordOffset : 24;
-    uint32_t flags : 8;
+    VkGeometryInstanceFlagsKHR flags : 8;
     uint64_t blasDeviceAddress;
 };
 
@@ -21,9 +23,8 @@ public:
     VkBuffer buffer = VK_NULL_HANDLE;
 
     void create(VkDevice device,
-                VkCommandBuffer cmdBuf,
                 const std::vector<TlasInstance>& instances,
-                Renderer* state
+                Renderer& state
                 );
 
     void destroy(VkDevice device);

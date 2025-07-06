@@ -1,10 +1,10 @@
 #include "tlas.h"
 #include "globals.h"
+#include "renderer.h"
 
 void Tlas::create(VkDevice device,
-                  VkCommandBuffer cmdBuf,
                   const std::vector<TlasInstance>& instances,
-                  Renderer* state
+                  Renderer& state
                   ) {
 
     std::vector<VkAccelerationStructureInstanceKHR> vkInstances;
@@ -24,7 +24,7 @@ void Tlas::create(VkDevice device,
 
     auto instancesBufferSize = static_cast<VkDeviceSize>(vkInstances.size() * sizeof(VkAccelerationStructureInstanceKHR));
 
-    state->createBuffer(
+    state.createBuffer(
         //static_cast<VkDeviceSize>(instances.size() * sizeof(VkAccelerationStructureKHR)),
         instancesBufferSize,
         VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
@@ -43,7 +43,8 @@ void Tlas::create(VkDevice device,
     VkBufferDeviceAddressInfoKHR instanceAddressInfo{};
     instanceAddressInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
     instanceAddressInfo.buffer = instancesBuffer;
-    VkDeviceAddress instancesBufferDeviceAddress = vkGetBufferDeviceAddress(device, &instanceAddressInfo);
+    instanceAddressInfo.pNext = NULL;
+    VkDeviceAddress instancesBufferDeviceAddress = pfnGetBufferDeviceAddressKHR(device, &instanceAddressInfo);
 
     VkAccelerationStructureGeometryKHR tlasGeometry{};
     tlasGeometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
@@ -60,6 +61,8 @@ void Tlas::create(VkDevice device,
     geometryInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
     geometryInfo.geometryCount = 1;
     geometryInfo.pGeometries = &tlasGeometry;
+    geometryInfo.ppGeometries = nullptr;
+    geometryInfo.pNext = NULL;
 
     auto primitiveCount = static_cast<uint32_t>(vkInstances.size());
 
@@ -74,11 +77,9 @@ void Tlas::create(VkDevice device,
         &tlasSizeInfo
         );
 
-    VkBuffer tlasBuffer;
-    VkDeviceMemory tlasBufferMemory;
-    state->createBuffer(
+    state.createBuffer(
         tlasSizeInfo.accelerationStructureSize,
-        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         buffer,
         memory
@@ -86,7 +87,7 @@ void Tlas::create(VkDevice device,
 
     VkAccelerationStructureCreateInfoKHR createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
-    createInfo.buffer = tlasBuffer;
+    createInfo.buffer = buffer;
     createInfo.size = tlasSizeInfo.accelerationStructureSize;
     createInfo.offset = 0;
     createInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
@@ -94,18 +95,15 @@ void Tlas::create(VkDevice device,
     createInfo.createFlags = 0; // no flags needed, for now
 
     VkAccelerationStructureKHR createdTlas;
-    pfnCreateAccelerationStructureKHR(
-        device,
-        &createInfo,
-        nullptr,
-        &createdTlas
-        );
+    if (pfnCreateAccelerationStructureKHR(device, &createInfo, nullptr, &createdTlas) != VK_SUCCESS){
+        throw std::runtime_error("failed creating TLAS");
+    }
 
     this->handle = createdTlas;
 
     VkBuffer scratchBuffer;
     VkDeviceMemory scratchBufferMemory;
-    state->createBuffer(
+    state.createBuffer(
         tlasSizeInfo.buildScratchSize,
         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
@@ -116,9 +114,11 @@ void Tlas::create(VkDevice device,
     VkBufferDeviceAddressInfo scratchDeviceAddressInfo;
     scratchDeviceAddressInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
     scratchDeviceAddressInfo.buffer = scratchBuffer;
+    scratchDeviceAddressInfo.pNext = NULL;
     VkDeviceAddress scratchDeviceAddress = vkGetBufferDeviceAddress(device, &scratchDeviceAddressInfo);
 
 
+    geometryInfo.srcAccelerationStructure = VK_NULL_HANDLE; // for now
     geometryInfo.dstAccelerationStructure = this->handle;
     geometryInfo.scratchData.deviceAddress = scratchDeviceAddress;
 
@@ -130,12 +130,15 @@ void Tlas::create(VkDevice device,
 
     const VkAccelerationStructureBuildRangeInfoKHR* pBuildRangeInfos[] = { &rangeInfo };
 
+
+    VkCommandBuffer cmdBuf = state.beginSingleTimeCommands();
     pfnCmdBuildAccelerationStructuresKHR(
         cmdBuf,
         1,
         &geometryInfo,
         pBuildRangeInfos
         );
+    state.endSingleTimeCommands(cmdBuf);
 }
 
 void Tlas::destroy(VkDevice device) {

@@ -1,5 +1,8 @@
 #include "renderer.h"
 
+#include "blas.h"
+#include "tlas.h"
+
 VkResult CreateDebugUtilsMessengerEXT(
     VkInstance instance,
     const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo,
@@ -68,6 +71,7 @@ void Renderer::initVulkan() {
         createDescriptorSets();
         createCommandBuffers();
         createSyncObjects();
+        createAccelerationStructures();
 }
 
 void Renderer::mainLoop() {
@@ -158,14 +162,18 @@ VkCommandBuffer Renderer::beginSingleTimeCommands() {
     allocInfo.commandBufferCount = 1;
 
     VkCommandBuffer commandBuffer;
-    vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer);
+    if (vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer) != VK_SUCCESS) {
+        throw std::runtime_error("failed to allocate single time command buffer") ;
+    }
 
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     //beginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
 
-    vkBeginCommandBuffer(commandBuffer, &beginInfo);
+    if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+        throw std::runtime_error("failed to begin single time command buffer");
+    }
 
     return commandBuffer;
 }
@@ -786,13 +794,18 @@ void Renderer::createVertexBuffer() {
 
     createBuffer(
         bufferSize,
-        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         vertexBuffer,
         vertexBufferMemory
         );
 
     copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
+
+    VkBufferDeviceAddressInfo bufferAddressInfo{};
+    bufferAddressInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+    bufferAddressInfo.buffer = vertexBuffer;
+    vertexBufferAddress = pfnGetBufferDeviceAddressKHR(device, &bufferAddressInfo);
 
     vkDestroyBuffer(device, stagingBuffer, nullptr);
     vkFreeMemory(device, stagingBufferMemory, nullptr);
@@ -810,12 +823,22 @@ void Renderer::createBuffer(VkDeviceSize size, VkBufferUsageFlags usageFlags, Vk
     }
 
     VkMemoryRequirements memRequirements;
+
     vkGetBufferMemoryRequirements(device, buffer, &memRequirements);
 
     VkMemoryAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     allocInfo.allocationSize = memRequirements.size;
     allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, propertyFlags);
+
+    VkMemoryAllocateFlagsInfo memoryFlagsInfo{};
+    if (usageFlags & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) {
+        memoryFlagsInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+        memoryFlagsInfo.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+        memoryFlagsInfo.pNext = nullptr;
+
+        allocInfo.pNext = &memoryFlagsInfo;
+    }
 
     if (vkAllocateMemory(device, &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS) {
         throw std::runtime_error("failed allocating memory for buffer");
@@ -884,9 +907,20 @@ void Renderer::createIndexBuffer() {
     //memcpy(data, indices.data(), (size_t) bufferSize);
     vkUnmapMemory(device, stagingBufferMemory);
 
-    createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indexBuffer, indexBufferMemory);
+    createBuffer(
+        bufferSize,
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        indexBuffer,
+        indexBufferMemory
+        );
 
     copyBuffer(stagingBuffer, indexBuffer, bufferSize);
+
+    VkBufferDeviceAddressInfo bufferAddressInfo{};
+    bufferAddressInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+    bufferAddressInfo.buffer = indexBuffer;
+    indexBufferAddress = pfnGetBufferDeviceAddressKHR(device, &bufferAddressInfo);
 
     vkDestroyBuffer(device, stagingBuffer, nullptr);
     vkFreeMemory(device, stagingBufferMemory, nullptr);
@@ -1136,6 +1170,7 @@ void Renderer::createDescriptorSets() {
         descriptorWrites[0].pBufferInfo = &bufferInfo;
         descriptorWrites[0].pImageInfo = nullptr;
         descriptorWrites[0].pTexelBufferView = nullptr;
+        descriptorWrites[0].pNext = nullptr;
 
         descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         descriptorWrites[1].dstSet = descriptorSets[i];
@@ -1144,6 +1179,7 @@ void Renderer::createDescriptorSets() {
         descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         descriptorWrites[1].descriptorCount = 1;
         descriptorWrites[1].pImageInfo = &imageInfo;
+        descriptorWrites[1].pNext = nullptr;
 
         vkUpdateDescriptorSets(
             device,
@@ -1634,7 +1670,8 @@ void Renderer::transitionImageLayout(VkImage image, VkFormat format, VkImageLayo
 
     vkCmdPipelineBarrier(
     commandBuffer,
-    0 , 0 ,
+    VK_PIPELINE_STAGE_TRANSFER_BIT,
+    VK_ACCESS_TRANSFER_WRITE_BIT,
     0,
     0, nullptr,
     0, nullptr,
@@ -1745,4 +1782,37 @@ bool Renderer::loadMesh(const std::string& fpath, Mesh& outputMesh) {
 
     return true;
 }
+
+void Renderer::createAccelerationStructures() {
+    BlasInput input{};
+    input.vertexAddress = vertexBufferAddress;
+    input.indexAddress = indexBufferAddress;
+    input.vertexCount = meshesInfo[0].vertexCount;
+    input.indexCount = meshesInfo[0].indexCount;
+    input.vertexFormat = VERTEX_FORMAT;
+
+    blas.create(device, input, *this);
+
+    TlasInstance instance{};
+    instance.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+    VkTransformMatrixKHR transform{};
+    glm::mat4 mat = glm::mat4(1.0f);
+
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 4; ++j)
+            transform.matrix[i][j] = mat[j][i];
+
+    instance.transform = transform;
+    VkAccelerationStructureDeviceAddressInfoKHR blasAddressInfo{};
+    blasAddressInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
+    blasAddressInfo.accelerationStructure = blas.handle;
+    instance.blasDeviceAddress = pfnGetAccelerationStructureDeviceAddressKHR(device, &blasAddressInfo);
+    instance.instanceCustomIndex = 0;
+    instance.mask = 0xFF;
+    instance.instanceShaderBindingTableRecordOffset = 0;
+
+    std::vector<TlasInstance> instances = { instance };
+    tlas.create(device, instances, *this);
+}
+
 
