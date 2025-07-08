@@ -94,21 +94,14 @@ void Blas::create(VkDevice device,
 
     const VkAccelerationStructureBuildRangeInfoKHR* pRangeInfos[] = { &rangeInfo };
 
-    /*
-    VkCommandBufferBeginInfo beginInfo{};
-    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmdBuf, &beginInfo);
-    */
-
-    if (scratchAddress == 0) {
-        throw std::runtime_error("fuck, scratch address");
-    }
-
     VkCommandBuffer cmdBuf_ = state.beginSingleTimeCommands();
     pfnCmdBuildAccelerationStructuresKHR(cmdBuf_, 1, &buildInfo, pRangeInfos);
     state.endSingleTimeCommands(cmdBuf_);
+}
 
-    //vkEndCommandBuffer(cmdBuf);
+void Blas::destroy(VkDevice device) {
+    vkDestroyBuffer(device, buffer, nullptr);
+    vkFreeMemory(device, memory, nullptr);
+    pfnDestroyAccelerationStructureKHR(device, handle, nullptr);
 }
 

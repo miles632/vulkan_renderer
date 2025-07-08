@@ -142,5 +142,7 @@ void Tlas::create(VkDevice device,
 }
 
 void Tlas::destroy(VkDevice device) {
-
+    vkDestroyBuffer(device, buffer, nullptr);
+    vkFreeMemory(device, memory, nullptr);
+    pfnDestroyAccelerationStructureKHR(device, handle, nullptr);
 }
