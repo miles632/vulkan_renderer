@@ -139,7 +139,6 @@ private:
     VkQueue graphicsQueue;
     VkQueue presentQueue;
 
-    VkDescriptorSetLayout descriptorSetLayout;
     VkPipelineLayout pipelineLayout;
     VkRenderPass renderPass;
     VkPipeline graphicsPipeline;
@@ -159,8 +158,13 @@ private:
     std::vector<VkDeviceMemory> uniformBuffersMemory;
     std::vector<void*> uniformBuffersMapped;
 
+    VkDescriptorSetLayout descriptorSetLayout;
     VkDescriptorPool descriptorPool;
     std::vector<VkDescriptorSet> descriptorSets;
+
+    std::vector<VkDescriptorSet> RTDescriptorSets;
+    VkDescriptorSetLayout RTDescriptorSetLayout;
+    VkDescriptorPool RTDescriptorPool;
 
     std::vector<VkSemaphore> imageAvailableSemaphores;
     std::vector<VkSemaphore> renderFinishedSemaphores;
@@ -192,6 +196,13 @@ private:
 
     Tlas tlas;
     Blas blas;
+
+    VkImageView RTOutputImageView;
+    VkDeviceMemory RTOutputImageMemory;
+    VkImage RTOutputImage;
+
+    VkBuffer RTVertexHitBuf;
+    VkBuffer RTIndexHitBuf;
 
     void initWindow();
     void initVulkan();
@@ -246,6 +257,7 @@ public:
 
 private:
     void createGraphicsPipeline();
+    void createRayTracingPipeline();
 
     void createUniformBuffers();
     void updateUniformBuffer(uint32_t currentImage);
@@ -255,6 +267,10 @@ private:
     void createDescriptorPool();
     void createDescriptorSets();
     void createDescriptorSetLayout();
+
+    void createRTDescriptorSet();
+    void createRTDescriptorPool();
+    void createRTDescriptorSetLayout();
 
     static std::vector<char> readFile(const std::string& filename);
 

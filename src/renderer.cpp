@@ -1,6 +1,7 @@
 #include "renderer.h"
 
 #include "blas.h"
+#include "hitinfo.h"
 #include "tlas.h"
 
 VkResult CreateDebugUtilsMessengerEXT(
@@ -1057,6 +1058,68 @@ void Renderer::createGraphicsPipeline() {
     vkDestroyShaderModule(device, vertShaderModule, nullptr);
 }
 
+void Renderer::createRayTracingPipeline() {
+    auto rgenShaderCode = readFile("shaders/raytrace.rgen");
+    auto rchitShaderCode = readFile("shaders/raytrace.rchit");
+    auto rmissShaderCode = readFile("shaders/raytrace.rmiss");
+
+    VkShaderModule rgenModule = createShaderModule(rgenShaderCode);
+    VkShaderModule rchitModule = createShaderModule(rchitShaderCode);
+    VkShaderModule rmissModule = createShaderModule(rmissShaderCode);
+
+    VkPipelineShaderStageCreateInfo rgenStageInfo{};
+    rgenStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    rgenStageInfo.stage = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+    rgenStageInfo.module = rgenModule;
+
+    VkPipelineShaderStageCreateInfo chitStageInfo{};
+    chitStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    chitStageInfo.stage = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+    chitStageInfo.module = rchitModule;
+
+    VkPipelineShaderStageCreateInfo missStageInfo{};
+    missStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    missStageInfo.stage = VK_SHADER_STAGE_MISS_BIT_KHR;
+    missStageInfo.module = rmissModule;
+
+    std::array<VkPipelineShaderStageCreateInfo, 3> shaderStages = {rgenStageInfo, chitStageInfo, missStageInfo};
+    std::vector<VkRayTracingShaderGroupCreateInfoKHR> shaderGroups;
+
+
+    // TODO: finish implementing shader groups
+    VkRayTracingShaderGroupCreateInfoKHR raygenGroup{};
+    raygenGroup.sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
+    raygenGroup.type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
+    raygenGroup.generalShader = 0; //0th in shaderStages
+    raygenGroup.closestHitShader = VK_SHADER_UNUSED_KHR;
+    raygenGroup.anyHitShader = VK_SHADER_UNUSED_KHR;
+    raygenGroup.intersectionShader = VK_SHADER_UNUSED_KHR;
+
+    VkRayTracingShaderGroupCreateInfoKHR missGroup{};
+
+
+    VkRayTracingPipelineCreateInfoKHR pipelineInfo;
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR;
+    pipelineInfo.pNext = nullptr;
+    pipelineInfo.flags = 0;
+    pipelineInfo.stageCount = 3;
+    pipelineInfo.pStages = shaderStages.data();
+
+
+
+
+    vkCreateRayTracingPipelinesKHR(
+        device,
+        VK_NULL_HANDLE,
+        VK_NULL_HANDLE,
+        1,
+        &pipelineInfo,
+        nullptr,
+        &graphicsPipeline
+        );
+}
+
+
 void Renderer::createDescriptorSetLayout() {
     VkDescriptorSetLayoutBinding uboLayoutBinding{};
     uboLayoutBinding.binding = 0;
@@ -1194,6 +1257,156 @@ void Renderer::createDescriptorSets() {
             );
     }
 }
+
+void Renderer::createRTDescriptorSet() {
+    VkDescriptorSetAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = RTDescriptorPool;
+    allocInfo.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
+    allocInfo.pSetLayouts = &descriptorSetLayout;
+
+    if (vkAllocateDescriptorSets(device, &allocInfo, RTDescriptorSets.data()) != VK_SUCCESS) {
+        throw std::runtime_error("failed allocating descriptor sets");
+    }
+
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        VkDescriptorBufferInfo UBOInfo{};
+        UBOInfo.buffer = uniformBuffers[i];
+        UBOInfo.offset = 0;
+        UBOInfo.range = sizeof(UniformBufferObject);
+
+        VkWriteDescriptorSetAccelerationStructureKHR accelStruct{};
+        accelStruct.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
+        accelStruct.accelerationStructureCount = 1;
+        accelStruct.pAccelerationStructures = &tlas.handle;
+
+        VkDescriptorImageInfo textureImageInfo{};
+        textureImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        textureImageInfo.imageView = textureImageView;
+        textureImageInfo.sampler = textureSampler;
+
+        VkDescriptorImageInfo storageImageInfo{};
+        storageImageInfo.imageView = RTOutputImageView;
+        storageImageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+        VkDescriptorBufferInfo storageBufInfoVertex{};
+        storageBufInfoVertex.buffer = vertexBuffer;
+        storageBufInfoVertex.offset = 0;
+        storageBufInfoVertex.range = VK_WHOLE_SIZE;
+
+        VkDescriptorBufferInfo storageBufInfoIndex{};
+        storageBufInfoIndex.buffer = indexBuffer;
+        storageBufInfoIndex.offset = 0;
+        storageBufInfoIndex.range = VK_WHOLE_SIZE; // take the entire buffer
+
+        VkWriteDescriptorSet writeAccelStr;
+        writeAccelStr.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writeAccelStr.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+        writeAccelStr.dstSet = descriptorSets[i];
+        writeAccelStr.dstBinding = 0;
+        writeAccelStr.descriptorCount = 1;
+        writeAccelStr.dstArrayElement = 0;
+        writeAccelStr.pNext = &accelStruct;
+
+        VkWriteDescriptorSet writeStorageImage;
+        writeStorageImage.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writeStorageImage.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writeStorageImage.dstSet = descriptorSets[i];
+        writeStorageImage.dstBinding = 1;
+        writeStorageImage.descriptorCount = 1;
+        writeStorageImage.dstArrayElement = 0;
+        writeStorageImage.pImageInfo = &storageImageInfo;
+
+        VkWriteDescriptorSet writeUBO;
+        writeUBO.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writeUBO.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        writeUBO.dstSet = descriptorSets[i];
+        writeUBO.dstBinding = 2;
+        writeUBO.descriptorCount = 1;
+        writeUBO.dstArrayElement = 0;
+        writeUBO.pBufferInfo = &UBOInfo;
+
+        VkWriteDescriptorSet writeStorageHitVertex;
+        writeStorageHitVertex.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writeStorageHitVertex.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writeStorageHitVertex.dstSet = descriptorSets[i];
+        writeStorageHitVertex.dstBinding = 3;
+        writeStorageHitVertex.descriptorCount = 1;
+        writeStorageHitVertex.dstArrayElement = 0;
+        writeStorageHitVertex.pBufferInfo = &storageBufInfoVertex;
+
+        VkWriteDescriptorSet writeStorageHitIndex;
+        writeStorageHitIndex.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writeStorageHitIndex.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writeStorageHitIndex.dstSet = descriptorSets[i];
+        writeStorageHitIndex.dstBinding = 4;
+        writeStorageHitIndex.descriptorCount = 1;
+        writeStorageHitIndex.dstArrayElement = 0;
+        writeStorageHitIndex.pBufferInfo = &storageBufInfoIndex;
+
+        // TODO: add sampling
+        std::array<VkWriteDescriptorSet, 5> descriptorWrites;
+
+        descriptorWrites[0] = writeAccelStr;
+        descriptorWrites[1] = writeStorageImage;
+        descriptorWrites[2] = writeUBO;
+        descriptorWrites[3] = writeStorageHitVertex;
+        descriptorWrites[4] = writeStorageHitIndex;
+
+        vkUpdateDescriptorSets(
+            device,
+            descriptorWrites.size(),
+            descriptorWrites.data(),
+            0,
+            nullptr
+            );
+    }
+}
+
+void Renderer::createRTDescriptorSetLayout() {
+    std::vector<VkDescriptorSetLayoutBinding> bindings = {
+    { 0, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, MAX_FRAMES_IN_FLIGHT, VK_SHADER_STAGE_RAYGEN_BIT_KHR},
+    { 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, MAX_FRAMES_IN_FLIGHT, VK_SHADER_STAGE_RAYGEN_BIT_KHR},
+        { 2, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, MAX_FRAMES_IN_FLIGHT, VK_SHADER_STAGE_RAYGEN_BIT_KHR},
+        // will only use closest hit right now
+        { 3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, MAX_FRAMES_IN_FLIGHT, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR}, // vertex
+        { 4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, MAX_FRAMES_IN_FLIGHT, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR}, // index
+        { 5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, MAX_FRAMES_IN_FLIGHT, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR}
+    };
+
+    VkDescriptorSetLayoutCreateInfo layoutCreateInfo{};
+    layoutCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutCreateInfo.pNext = nullptr;
+    layoutCreateInfo.pBindings = bindings.data();
+    layoutCreateInfo.bindingCount = bindings.size();
+
+    if (vkCreateDescriptorSetLayout(device, &layoutCreateInfo, nullptr, &RTDescriptorSetLayout) != VK_SUCCESS) {
+        throw std::runtime_error("failed creating ray tracing descriptor set layout") ;
+    }
+}
+
+
+void Renderer::createRTDescriptorPool() {
+    std::vector<VkDescriptorPoolSize> poolSizes = {
+        {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR , 1},
+        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2},
+        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 5},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 6}
+    };
+
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.pPoolSizes = poolSizes.data();
+    poolInfo.poolSizeCount = poolSizes.size();
+    poolInfo.maxSets = MAX_FRAMES_IN_FLIGHT;
+
+    if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &RTDescriptorPool) != VK_SUCCESS) {
+        throw std::runtime_error("failed creating ray tracing descriptor pool");
+    }
+}
+
 
 std::vector<char> Renderer::readFile(const std::string& filename) {
     std::ifstream file(filename, std::ios::ate | std::ios::binary);
@@ -1397,7 +1610,7 @@ void Renderer::recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t image
         vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
 
         VkRect2D scissor{};
-        scissor.offset = {0,0};
+        scissor.offset = {0, 0};
         scissor.extent = swapChainExtent;
         vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
