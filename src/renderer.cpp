@@ -35,7 +35,7 @@ void Renderer::initWindow() {
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
-        window = glfwCreateWindow(WIDTH, HEIGHT, "thulean renderer", nullptr, nullptr);
+        window = glfwCreateWindow(WIDTH, HEIGHT, "renderer", nullptr, nullptr);
         glfwSetWindowUserPointer(window, this);
 
         glfwSetKeyCallback(window, &keyInputCallback);
@@ -1071,22 +1071,23 @@ void Renderer::createRayTracingPipeline() {
     rgenStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     rgenStageInfo.stage = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
     rgenStageInfo.module = rgenModule;
+    rgenStageInfo.pName = "main";
 
     VkPipelineShaderStageCreateInfo chitStageInfo{};
     chitStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     chitStageInfo.stage = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
     chitStageInfo.module = rchitModule;
+    chitStageInfo.pName = "main";
 
     VkPipelineShaderStageCreateInfo missStageInfo{};
     missStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     missStageInfo.stage = VK_SHADER_STAGE_MISS_BIT_KHR;
     missStageInfo.module = rmissModule;
+    missStageInfo.pName = "main";
 
     std::array<VkPipelineShaderStageCreateInfo, 3> shaderStages = {rgenStageInfo, chitStageInfo, missStageInfo};
-    std::vector<VkRayTracingShaderGroupCreateInfoKHR> shaderGroups;
 
 
-    // TODO: finish implementing shader groups
     VkRayTracingShaderGroupCreateInfoKHR raygenGroup{};
     raygenGroup.sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
     raygenGroup.type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
@@ -1096,27 +1097,58 @@ void Renderer::createRayTracingPipeline() {
     raygenGroup.intersectionShader = VK_SHADER_UNUSED_KHR;
 
     VkRayTracingShaderGroupCreateInfoKHR missGroup{};
+    missGroup.sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
+    missGroup.type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
+    missGroup.generalShader = 2;
+    missGroup.closestHitShader = VK_SHADER_UNUSED_KHR;
+    missGroup.anyHitShader = VK_SHADER_UNUSED_KHR;
+    missGroup.intersectionShader = VK_SHADER_UNUSED_KHR;
 
 
-    VkRayTracingPipelineCreateInfoKHR pipelineInfo;
+    VkRayTracingShaderGroupCreateInfoKHR hitGroup{};
+    hitGroup.sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
+    hitGroup.type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
+    hitGroup.generalShader = VK_SHADER_UNUSED_KHR;
+    hitGroup.closestHitShader = 1;
+    hitGroup.anyHitShader = VK_SHADER_UNUSED_KHR;
+    hitGroup.intersectionShader = VK_SHADER_UNUSED_KHR;
+
+    std::array shaderGroups = {raygenGroup, missGroup, hitGroup};
+
+    VkPipelineLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    layoutInfo.setLayoutCount = 1;
+    layoutInfo.pSetLayouts = &descriptorSetLayout;
+    layoutInfo.pushConstantRangeCount = 0;
+
+    if (vkCreatePipelineLayout(device, &layoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
+        throw std::runtime_error("failed creating pipeline layout");
+    }
+
+    VkRayTracingPipelineCreateInfoKHR pipelineInfo{};
     pipelineInfo.sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR;
     pipelineInfo.pNext = nullptr;
     pipelineInfo.flags = 0;
     pipelineInfo.stageCount = 3;
     pipelineInfo.pStages = shaderStages.data();
+    pipelineInfo.groupCount = (uint32_t)shaderGroups.size();
+    pipelineInfo.pGroups = shaderGroups.data();
+    pipelineInfo.maxPipelineRayRecursionDepth = 2;
+    pipelineInfo.pLibraryInfo = nullptr; // TODO: implement pipeline libraries later
+    pipelineInfo.pLibraryInterface = nullptr;
+    pipelineInfo.pDynamicState = nullptr;
+    pipelineInfo.layout = pipelineLayout;
+    pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
 
+    if (vkCreateRayTracingPipelinesKHR(
+        device, VK_NULL_HANDLE, VK_NULL_HANDLE,
+        1, &pipelineInfo, nullptr, &graphicsPipeline ) != VK_SUCCESS) {
+        throw std::runtime_error("failed creating graphics pipeline");
+    }
 
-
-
-    vkCreateRayTracingPipelinesKHR(
-        device,
-        VK_NULL_HANDLE,
-        VK_NULL_HANDLE,
-        1,
-        &pipelineInfo,
-        nullptr,
-        &graphicsPipeline
-        );
+    vkDestroyShaderModule(device, rchitModule, nullptr);
+    vkDestroyShaderModule(device, rgenModule, nullptr);
+    vkDestroyShaderModule(device, rmissModule, nullptr);
 }
 
 
