@@ -201,8 +201,13 @@ private:
     VkDeviceMemory RTOutputImageMemory;
     VkImage RTOutputImage;
 
-    VkBuffer RTVertexHitBuf;
-    VkBuffer RTIndexHitBuf;
+    VkBuffer sbtBuffer;
+    VkDeviceMemory sbtBufferMemory;
+    VkDeviceAddress sbtAddress;
+
+    VkStridedDeviceAddressRegionKHR rgenRegion{};
+    VkStridedDeviceAddressRegionKHR missRegion{};
+    VkStridedDeviceAddressRegionKHR chitRegion{};
 
     void initWindow();
     void initVulkan();
@@ -258,6 +263,8 @@ public:
 private:
     void createGraphicsPipeline();
     void createRayTracingPipeline();
+
+    void createShaderBindingTable();
 
     void createUniformBuffers();
     void updateUniformBuffer(uint32_t currentImage);

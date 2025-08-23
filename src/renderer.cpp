@@ -224,6 +224,9 @@ void Renderer::cleanup() {
 
     vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
 
+    vkDestroyBuffer(device, sbtBuffer, nullptr);
+    vkFreeMemory(device, sbtBufferMemory, nullptr);
+
     vkDestroyBuffer(device, indexBuffer, nullptr);
     vkFreeMemory(device, indexBufferMemory, nullptr);
 
@@ -1318,7 +1321,7 @@ void Renderer::createRTDescriptorSet() {
         textureImageInfo.sampler = textureSampler;
 
         VkDescriptorImageInfo storageImageInfo{};
-        storageImageInfo.imageView = RTOutputImageView;
+        storageImageInfo.imageView = RTOutputImageView; // TODO: initialize the image and its memory
         storageImageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
         VkDescriptorBufferInfo storageBufInfoVertex{};
@@ -1396,6 +1399,9 @@ void Renderer::createRTDescriptorSet() {
 }
 
 void Renderer::createRTDescriptorSetLayout() {
+
+    /* TODO: reorganize into two different descriptor sets, first for scene to hold geometry buffers,
+       second for output image and the ubo*/
     std::vector<VkDescriptorSetLayoutBinding> bindings = {
     { 0, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, MAX_FRAMES_IN_FLIGHT, VK_SHADER_STAGE_RAYGEN_BIT_KHR},
     { 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, MAX_FRAMES_IN_FLIGHT, VK_SHADER_STAGE_RAYGEN_BIT_KHR},
@@ -1437,6 +1443,83 @@ void Renderer::createRTDescriptorPool() {
     if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &RTDescriptorPool) != VK_SUCCESS) {
         throw std::runtime_error("failed creating ray tracing descriptor pool");
     }
+}
+
+void Renderer::createShaderBindingTable() {
+    VkPhysicalDeviceRayTracingPipelinePropertiesKHR rtProps{};
+    rtProps.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR;
+
+    VkPhysicalDeviceProperties2 props2{};
+    props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+    props2.pNext = &rtProps;
+
+    vkGetPhysicalDeviceProperties2(physicalDevice, &props2);
+
+    uint32_t handleSize = rtProps.shaderGroupHandleSize;
+    uint32_t handleCount = 3;
+
+    auto alignUp = [](size_t value, size_t alignment) -> uint32_t {
+        return (value + alignment - 1) & ~(alignment -1);
+    };
+
+    uint32_t handleSizeAligned = alignUp(handleSize, rtProps.shaderGroupHandleAlignment);
+    // reminder: the stride of the closest hit and miss regions will probably be computed seperately
+    // in the future, there is only one entry in all regions atm
+    uint64_t regionStride = alignUp(handleSizeAligned, rtProps.shaderGroupBaseAlignment);
+
+    rgenRegion.stride = regionStride;
+    rgenRegion.size = rgenRegion.stride;
+    missRegion.stride = handleSizeAligned;
+    missRegion.size = regionStride;
+    chitRegion.stride = handleSizeAligned;
+    chitRegion.size = regionStride;
+
+    uint32_t dataSize = handleCount * handleSize;
+    std::vector<uint8_t> handles(dataSize);
+
+    // TODO: make function pointers for these
+    if (vkGetRayTracingShaderGroupHandlesKHR(device, graphicsPipeline, 0, handleCount, dataSize, handles.data()) != VK_SUCCESS) {
+        throw std::runtime_error("failed fetching shader group handles");
+    }
+
+    VkDeviceSize sbtSize =  rgenRegion.size + chitRegion.size + missRegion.size;
+    createBuffer(sbtSize,
+        VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        sbtBuffer, sbtBufferMemory
+        );
+
+    VkBufferDeviceAddressInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+    info.pNext = nullptr;
+    info.buffer = sbtBuffer;
+    sbtAddress = vkGetBufferDeviceAddress(device, &info);
+    rgenRegion.deviceAddress = sbtAddress;
+    missRegion.deviceAddress = sbtAddress + rgenRegion.size;
+    chitRegion.deviceAddress = sbtAddress + rgenRegion.size + missRegion.size;
+
+    auto getHandle = [&] (uint32_t idx) -> unsigned char* {
+        return (handles.data() + idx * handleSize);
+    };
+
+    void *data;
+    vkMapMemory(device, sbtBufferMemory, 0, dataSize, 0, &data);
+    auto *pSBTBuffer = reinterpret_cast<uint8_t*>(data);
+    uint8_t* pData = nullptr;
+    uint32_t handleIdx = 0;
+
+    pData = pSBTBuffer;
+    memcpy(pData, getHandle(handleIdx++), handleSize);
+
+    pData = pSBTBuffer + rgenRegion.size;
+    memcpy(pData, getHandle(handleIdx++), handleSize);
+    pData += missRegion.stride;
+
+    pData = pSBTBuffer + rgenRegion.size + missRegion.size;
+    memcpy(pData, getHandle(handleIdx++), handleSize);
+    pData += chitRegion.stride;
+
+    vkUnmapMemory(device, sbtBufferMemory);
 }
 
 
