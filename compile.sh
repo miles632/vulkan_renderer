@@ -1,7 +1,6 @@
-GLSLC="/home/apu/vulkan/1.4.304.0/x86_64/bin/glslangValidator"
+GLSLC="/home/clearchus/1.4.321.1/x86_64/bin/glslangValidator"
 OUTDIR="shaders"
 
-$GLSLC -V shaders/vertex.vert -o $OUTDIR/vert.spv
-$GLSLC -V shaders/fragment.frag -o $OUTDIR/frag.spv
-
-$GLSLC -V --target-env vulkan1.2 -S rgen shaders/raygen.rgen -o $OUTDIR/rgen.spv
+$GLSLC -V -Iinclude --target-env vulkan1.2 -S rgen shaders/raytrace.rgen -o $OUTDIR/rgen.spv
+$GLSLC -V -Iinclude --target-env vulkan1.2 -S rchit shaders/raytrace.rchit -o $OUTDIR/rchit.spv
+$GLSLC -V -Iinclude --target-env vulkan1.2 -S rmiss shaders/raytrace.rmiss -o $OUTDIR/rmiss.spv

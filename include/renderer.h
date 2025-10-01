@@ -106,6 +106,12 @@ struct SwapChainSupportDetails {
     std::vector<VkPresentModeKHR> presentModes;
 };
 
+typedef enum RenderingMode {
+    RENDERING_MODE_RAY_TRACING = 1,
+    RENDERING_MODE_RASTERISATION, // TODO: in the future
+    RENDERING_MODE_WIREFRAME, // in the future
+} RenderingMode;
+
 class Renderer {
 public:
     void run() {
@@ -162,10 +168,6 @@ private:
     VkDescriptorPool descriptorPool;
     std::vector<VkDescriptorSet> descriptorSets;
 
-    std::vector<VkDescriptorSet> RTDescriptorSets;
-    VkDescriptorSetLayout RTDescriptorSetLayout;
-    VkDescriptorPool RTDescriptorPool;
-
     std::vector<VkSemaphore> imageAvailableSemaphores;
     std::vector<VkSemaphore> renderFinishedSemaphores;
     std::vector<VkFence> inFlightFences;
@@ -173,15 +175,18 @@ private:
     std::vector<Mesh> meshes;
     std::vector<MeshInfo> meshesInfo;
 
+    // uninitialized for now
     VkImage textureImage;
     VkDeviceMemory textureImageMemory;
     VkImageView textureImageView;
     VkSampler textureSampler;
 
+    // uninitialized for ray tracing
     VkImage depthImage;
     VkDeviceMemory depthImageMemory;
     VkImageView depthImageView;
 
+    // uninitialized for now
     VkImage colorImage;
     VkDeviceMemory colorImageMemory;
     VkImageView colorImageView;
@@ -190,6 +195,8 @@ private:
 
     bool framebufferResized = false;
 
+    RenderingMode renderingMode = RENDERING_MODE_RAY_TRACING;
+
     Camera camera;
 
     float lastFrameT = 0.0f;
@@ -197,9 +204,9 @@ private:
     Tlas tlas;
     Blas blas;
 
-    VkImageView RTOutputImageView;
-    VkDeviceMemory RTOutputImageMemory;
-    VkImage RTOutputImage;
+    VkImageView storageImageView_RT;
+    VkDeviceMemory storageImageMemory_RT;
+    VkImage storageImage_RT;
 
     VkBuffer sbtBuffer;
     VkDeviceMemory sbtBufferMemory;
@@ -262,7 +269,7 @@ public:
 
 private:
     void createGraphicsPipeline();
-    void createRayTracingPipeline();
+    void createPipeline_RT();
 
     void createShaderBindingTable();
 
@@ -275,9 +282,9 @@ private:
     void createDescriptorSets();
     void createDescriptorSetLayout();
 
-    void createRTDescriptorSet();
-    void createRTDescriptorPool();
-    void createRTDescriptorSetLayout();
+    void createDescriptorSet_RT();
+    void createDescriptorPool_RT();
+    void createDescriptorSetLayout_RT();
 
     static std::vector<char> readFile(const std::string& filename);
 
@@ -290,7 +297,9 @@ private:
 
     void createCommandPool();
     void createCommandBuffers();
-    void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex);
+    void recordCommandBuffer(VkCommandBuffer cmdBuf, uint32_t imageIndex);
+
+    void raytrace(VkCommandBuffer cmdBuf, uint32_t imageIndex);
 
     void createSyncObjects();
 
@@ -321,6 +330,8 @@ private:
     bool hasStencilComponent(VkFormat format);
     VkSampleCountFlagBits getMaxUsableSampleCount();
     void createColorResources();
+
+    void createStorageImage_RT();
 
     void createAccelerationStructures();
 

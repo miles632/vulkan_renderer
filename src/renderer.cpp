@@ -53,26 +53,42 @@ void Renderer::initVulkan() {
         createLogicalDevice();
         createSwapChain();
         createImageViews();
-        createRenderPass();
-        createDescriptorSetLayout();
-        createGraphicsPipeline();
-        createColorResources();
-        createDepthResources();
-        createFrameBuffers();
+        //createRenderPass();
+        //createDescriptorSetLayout();
+        //createGraphicsPipeline();
+        //createDescriptorSetLayout_RT(); //createPipeline_RT();
+        //createColorResources();
+        //createDepthResources();
+        //createFrameBuffers();
+
+
+        createStorageImage_RT();
         createCommandPool();
         createCamera();
+
         loadMeshes();
-        createTextureImage();
-        createTextureImageView();
-        createTextureSampler();
         createVertexBuffer();
         createIndexBuffer();
         createUniformBuffers();
-        createDescriptorPool();
-        createDescriptorSets();
-        createCommandBuffers();
-        createSyncObjects();
+
         createAccelerationStructures();
+
+        createDescriptorSetLayout_RT();
+        createPipeline_RT();
+        createDescriptorPool_RT();
+        createDescriptorSet_RT();
+
+        createCommandBuffers();
+        createShaderBindingTable();
+        createSyncObjects();
+    /*
+        createTextureImage();
+        createTextureImageView();
+        createTextureSampler();
+        */
+    /*
+        createDescriptorPool();
+        createDescriptorSets(); */
 }
 
 void Renderer::mainLoop() {
@@ -96,7 +112,6 @@ void Renderer::drawFrame() {
     uint32_t imageIndex;
     VkResult swapchainResult = vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
 
-
     if (swapchainResult == VK_ERROR_OUT_OF_DATE_KHR) {
         recreateSwapChain();
         return;
@@ -109,7 +124,11 @@ void Renderer::drawFrame() {
     vkResetFences(device, 1, &inFlightFences[currentFrame]);
 
     vkResetCommandBuffer(commandBuffers[currentFrame], 0);
-    recordCommandBuffer(commandBuffers[currentFrame], imageIndex);
+    if (renderingMode == RENDERING_MODE_RASTERISATION) {
+        recordCommandBuffer(commandBuffers[currentFrame], imageIndex); // rasterisation
+    } else if (renderingMode == RENDERING_MODE_RAY_TRACING) {
+        raytrace(commandBuffers[currentFrame], imageIndex);                                                     // ray tracing
+    }
 
     VkSubmitInfo submitInfo{};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -566,8 +585,12 @@ void Renderer::createLogicalDevice() {
         (PFN_vkGetBufferDeviceAddressKHR) vkGetDeviceProcAddr(device, "vkGetBufferDeviceAddressKHR");
     pfnGetAccelerationStructureDeviceAddressKHR =
         (PFN_vkGetAccelerationStructureDeviceAddressKHR) vkGetDeviceProcAddr(device, "vkGetAccelerationStructureDeviceAddressKHR");
-
-
+    pfnGetRayTracingShaderGroupHandlesKHR =
+        (PFN_vkGetRayTracingShaderGroupHandlesKHR) vkGetDeviceProcAddr(device, "vkGetRayTracingShaderGroupHandlesKHR");
+    pfnCreateRayTracingPipelinesKHR =
+        (PFN_vkCreateRayTracingPipelinesKHR) vkGetDeviceProcAddr(device, "vkCreateRayTracingPipelinesKHR");
+    pfnCmdTraceRaysKHR =
+        (PFN_vkCmdTraceRaysKHR) vkGetDeviceProcAddr(device, "vkCmdTraceRaysKHR");
 
     vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &graphicsQueue);
     vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &presentQueue);
@@ -802,7 +825,7 @@ void Renderer::createVertexBuffer() {
 
     createBuffer(
         bufferSize,
-        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         vertexBuffer,
         vertexBufferMemory
@@ -917,7 +940,7 @@ void Renderer::createIndexBuffer() {
 
     createBuffer(
         bufferSize,
-        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         indexBuffer,
         indexBufferMemory
@@ -1061,10 +1084,10 @@ void Renderer::createGraphicsPipeline() {
     vkDestroyShaderModule(device, vertShaderModule, nullptr);
 }
 
-void Renderer::createRayTracingPipeline() {
-    auto rgenShaderCode = readFile("shaders/raytrace.rgen");
-    auto rchitShaderCode = readFile("shaders/raytrace.rchit");
-    auto rmissShaderCode = readFile("shaders/raytrace.rmiss");
+void Renderer::createPipeline_RT() {
+    auto rgenShaderCode = readFile("shaders/rgen.spv");
+    auto rchitShaderCode = readFile("shaders/rchit.spv");
+    auto rmissShaderCode = readFile("shaders/rmiss.spv");
 
     VkShaderModule rgenModule = createShaderModule(rgenShaderCode);
     VkShaderModule rchitModule = createShaderModule(rchitShaderCode);
@@ -1118,11 +1141,19 @@ void Renderer::createRayTracingPipeline() {
 
     std::array shaderGroups = {raygenGroup, missGroup, hitGroup};
 
+    VkPushConstantRange pcRange{};
+    pcRange.stageFlags =    VK_SHADER_STAGE_RAYGEN_BIT_KHR |
+                            VK_SHADER_STAGE_MISS_BIT_KHR |
+                            VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+    pcRange.offset = 0;
+    pcRange.size = sizeof(PushConstants);
+
     VkPipelineLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     layoutInfo.setLayoutCount = 1;
     layoutInfo.pSetLayouts = &descriptorSetLayout;
-    layoutInfo.pushConstantRangeCount = 0;
+    layoutInfo.pushConstantRangeCount = 1;
+    layoutInfo.pPushConstantRanges = &pcRange;
 
     if (vkCreatePipelineLayout(device, &layoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
         throw std::runtime_error("failed creating pipeline layout");
@@ -1143,7 +1174,7 @@ void Renderer::createRayTracingPipeline() {
     pipelineInfo.layout = pipelineLayout;
     pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
 
-    if (vkCreateRayTracingPipelinesKHR(
+    if (pfnCreateRayTracingPipelinesKHR(
         device, VK_NULL_HANDLE, VK_NULL_HANDLE,
         1, &pipelineInfo, nullptr, &graphicsPipeline ) != VK_SUCCESS) {
         throw std::runtime_error("failed creating graphics pipeline");
@@ -1293,14 +1324,18 @@ void Renderer::createDescriptorSets() {
     }
 }
 
-void Renderer::createRTDescriptorSet() {
+void Renderer::createDescriptorSet_RT() {
+    std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, descriptorSetLayout);
+
     VkDescriptorSetAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocInfo.descriptorPool = RTDescriptorPool;
+    allocInfo.descriptorPool = descriptorPool;
     allocInfo.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
-    allocInfo.pSetLayouts = &descriptorSetLayout;
+    allocInfo.pSetLayouts = layouts.data();
 
-    if (vkAllocateDescriptorSets(device, &allocInfo, RTDescriptorSets.data()) != VK_SUCCESS) {
+    descriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
+
+    if (vkAllocateDescriptorSets(device, &allocInfo, descriptorSets.data()) != VK_SUCCESS) {
         throw std::runtime_error("failed allocating descriptor sets");
     }
 
@@ -1321,8 +1356,10 @@ void Renderer::createRTDescriptorSet() {
         textureImageInfo.sampler = textureSampler;
 
         VkDescriptorImageInfo storageImageInfo{};
-        storageImageInfo.imageView = RTOutputImageView; // TODO: initialize the image and its memory
+        storageImageInfo.imageView = storageImageView_RT;
         storageImageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        storageImageInfo.sampler = VK_NULL_HANDLE;
+
 
         VkDescriptorBufferInfo storageBufInfoVertex{};
         storageBufInfoVertex.buffer = vertexBuffer;
@@ -1351,6 +1388,7 @@ void Renderer::createRTDescriptorSet() {
         writeStorageImage.descriptorCount = 1;
         writeStorageImage.dstArrayElement = 0;
         writeStorageImage.pImageInfo = &storageImageInfo;
+        writeStorageImage.pNext = nullptr;
 
         VkWriteDescriptorSet writeUBO;
         writeUBO.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -1360,6 +1398,7 @@ void Renderer::createRTDescriptorSet() {
         writeUBO.descriptorCount = 1;
         writeUBO.dstArrayElement = 0;
         writeUBO.pBufferInfo = &UBOInfo;
+        writeUBO.pNext = nullptr;
 
         VkWriteDescriptorSet writeStorageHitVertex;
         writeStorageHitVertex.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -1369,6 +1408,7 @@ void Renderer::createRTDescriptorSet() {
         writeStorageHitVertex.descriptorCount = 1;
         writeStorageHitVertex.dstArrayElement = 0;
         writeStorageHitVertex.pBufferInfo = &storageBufInfoVertex;
+        writeStorageHitVertex.pNext = nullptr;
 
         VkWriteDescriptorSet writeStorageHitIndex;
         writeStorageHitIndex.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -1378,6 +1418,7 @@ void Renderer::createRTDescriptorSet() {
         writeStorageHitIndex.descriptorCount = 1;
         writeStorageHitIndex.dstArrayElement = 0;
         writeStorageHitIndex.pBufferInfo = &storageBufInfoIndex;
+        writeStorageHitIndex.pNext = nullptr;
 
         // TODO: add sampling
         std::array<VkWriteDescriptorSet, 5> descriptorWrites;
@@ -1398,18 +1439,18 @@ void Renderer::createRTDescriptorSet() {
     }
 }
 
-void Renderer::createRTDescriptorSetLayout() {
+void Renderer::createDescriptorSetLayout_RT() {
 
     /* TODO: reorganize into two different descriptor sets, first for scene to hold geometry buffers,
        second for output image and the ubo*/
     std::vector<VkDescriptorSetLayoutBinding> bindings = {
-    { 0, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, MAX_FRAMES_IN_FLIGHT, VK_SHADER_STAGE_RAYGEN_BIT_KHR},
-    { 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, MAX_FRAMES_IN_FLIGHT, VK_SHADER_STAGE_RAYGEN_BIT_KHR},
-        { 2, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, MAX_FRAMES_IN_FLIGHT, VK_SHADER_STAGE_RAYGEN_BIT_KHR},
+    { 0, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR},
+    { 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR},
+        { 2, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR},
         // will only use closest hit right now
-        { 3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, MAX_FRAMES_IN_FLIGHT, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR}, // vertex
-        { 4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, MAX_FRAMES_IN_FLIGHT, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR}, // index
-        { 5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, MAX_FRAMES_IN_FLIGHT, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR}
+        { 3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR}, // vertex
+        { 4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR}, // index
+        { 5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR}
     };
 
     VkDescriptorSetLayoutCreateInfo layoutCreateInfo{};
@@ -1418,20 +1459,20 @@ void Renderer::createRTDescriptorSetLayout() {
     layoutCreateInfo.pBindings = bindings.data();
     layoutCreateInfo.bindingCount = bindings.size();
 
-    if (vkCreateDescriptorSetLayout(device, &layoutCreateInfo, nullptr, &RTDescriptorSetLayout) != VK_SUCCESS) {
+    if (vkCreateDescriptorSetLayout(device, &layoutCreateInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
         throw std::runtime_error("failed creating ray tracing descriptor set layout") ;
     }
 }
 
 
-void Renderer::createRTDescriptorPool() {
+void Renderer::createDescriptorPool_RT() {
     std::vector<VkDescriptorPoolSize> poolSizes = {
-        {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR , 1},
-        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2},
-        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 5},
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 6}
+        {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR , MAX_FRAMES_IN_FLIGHT},
+        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, MAX_FRAMES_IN_FLIGHT},
+        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, MAX_FRAMES_IN_FLIGHT},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, MAX_FRAMES_IN_FLIGHT},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, MAX_FRAMES_IN_FLIGHT},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, MAX_FRAMES_IN_FLIGHT}
     };
 
     VkDescriptorPoolCreateInfo poolInfo{};
@@ -1440,7 +1481,7 @@ void Renderer::createRTDescriptorPool() {
     poolInfo.poolSizeCount = poolSizes.size();
     poolInfo.maxSets = MAX_FRAMES_IN_FLIGHT;
 
-    if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &RTDescriptorPool) != VK_SUCCESS) {
+    if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
         throw std::runtime_error("failed creating ray tracing descriptor pool");
     }
 }
@@ -1477,8 +1518,7 @@ void Renderer::createShaderBindingTable() {
     uint32_t dataSize = handleCount * handleSize;
     std::vector<uint8_t> handles(dataSize);
 
-    // TODO: make function pointers for these
-    if (vkGetRayTracingShaderGroupHandlesKHR(device, graphicsPipeline, 0, handleCount, dataSize, handles.data()) != VK_SUCCESS) {
+    if (pfnGetRayTracingShaderGroupHandlesKHR(device, graphicsPipeline, 0, handleCount, dataSize, handles.data()) != VK_SUCCESS) {
         throw std::runtime_error("failed fetching shader group handles");
     }
 
@@ -1682,11 +1722,11 @@ void Renderer::createCommandBuffers() {
     }
 }
 
-void Renderer::recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
+void Renderer::recordCommandBuffer(VkCommandBuffer cmdBuf, uint32_t imageIndex) {
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
 
-    if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+    if (vkBeginCommandBuffer(cmdBuf, &beginInfo) != VK_SUCCESS) {
         throw std::runtime_error("failed to begin recording command buffer");
     }
 
@@ -1704,14 +1744,14 @@ void Renderer::recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t image
     renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
     renderPassInfo.pClearValues = clearValues.data();
 
-    vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdBeginRenderPass(cmdBuf, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+        vkCmdBindPipeline(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
         VkBuffer vertexBuffers[] = {vertexBuffer};
 
-        vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, (VkDeviceSize[]){0});
-        vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdBindVertexBuffers(cmdBuf, 0, 1, vertexBuffers, (VkDeviceSize[]){0});
+        vkCmdBindIndexBuffer(cmdBuf, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 
 
 
@@ -1722,27 +1762,64 @@ void Renderer::recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t image
         viewport.height = static_cast<float>(swapChainExtent.height);
         viewport.minDepth = 0.0f;
         viewport.maxDepth = 1.0f;
-        vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+        vkCmdSetViewport(cmdBuf, 0, 1, &viewport);
 
         VkRect2D scissor{};
         scissor.offset = {0, 0};
         scissor.extent = swapChainExtent;
-        vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+        vkCmdSetScissor(cmdBuf, 0, 1, &scissor);
 
-        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
+        vkCmdBindDescriptorSets(cmdBuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
 
 
         //vkCmdDraw(commandBuffer, static_cast<uint32_t>(vertices.size()), 1, 0, 0);
         //vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
         for (const MeshInfo& m : meshesInfo) {
-            vkCmdDrawIndexed(commandBuffer, m.indexCount, 1, m.vertexOffsetBytes / sizeof(uint32_t), m.vertexOffsetBytes / sizeof(Vertex), 0);
+            vkCmdDrawIndexed(cmdBuf, m.indexCount, 1, m.vertexOffsetBytes / sizeof(uint32_t), m.vertexOffsetBytes / sizeof(Vertex), 0);
         }
 
-        vkCmdEndRenderPass(commandBuffer);
+        vkCmdEndRenderPass(cmdBuf);
 
-    if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
+    if (vkEndCommandBuffer(cmdBuf) != VK_SUCCESS) {
         throw std::runtime_error("failed to record command buffer");
     }
+}
+
+
+void Renderer::raytrace(VkCommandBuffer cmdBuf, uint32_t imageIndex) {
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+
+    if (vkBeginCommandBuffer(cmdBuf, &beginInfo) != VK_SUCCESS) {
+        throw std::runtime_error("failed to begin recording command buffer");
+    }
+
+    vkCmdBindPipeline(cmdBuf, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, graphicsPipeline);
+
+    vkCmdBindDescriptorSets(
+        cmdBuf, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, pipelineLayout,
+        0, 1, descriptorSets.data(),
+        0, nullptr);
+
+    PushConstants pc{};
+    pc.viewInverse = glm::inverse(camera.getViewMatrix());
+    pc.projInverse = glm::inverse(glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float) swapChainExtent.height, 0.1f, 50.0f));
+    pc.cameraPos = camera.pos;
+    pc.frameIndex = imageIndex;
+
+
+    vkCmdPushConstants(cmdBuf, pipelineLayout, VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_MISS_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, 0, sizeof(PushConstants), &pc);
+
+    VkStridedDeviceAddressRegionKHR callableSBT{};
+    callableSBT.deviceAddress = 0;
+    callableSBT.size = 0;
+    callableSBT.stride = 0;
+
+    pfnCmdTraceRaysKHR(
+    cmdBuf, &rgenRegion, &missRegion, &chitRegion,
+    &callableSBT, WIDTH, HEIGHT, 1);
+
+    vkEndCommandBuffer(cmdBuf);
 }
 
 void Renderer::createSyncObjects() {
@@ -2067,6 +2144,17 @@ void Renderer::createColorResources() {
 
     colorImageView = createImageView(colorImage, colorFormat, VK_IMAGE_ASPECT_COLOR_BIT);
 }
+
+void Renderer::createStorageImage_RT() {
+    createImage(swapChainExtent.width, swapChainExtent.height,
+        msaaSamples, VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_TILING_OPTIMAL,
+        VK_IMAGE_USAGE_STORAGE_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        storageImage_RT, storageImageMemory_RT
+        );
+
+    storageImageView_RT = createImageView(storageImage_RT, VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT);
+}
+
 
 void Renderer::loadMeshes() {
     Mesh cube = Mesh{};
