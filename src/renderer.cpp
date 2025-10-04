@@ -62,8 +62,8 @@ void Renderer::initVulkan() {
         //createFrameBuffers();
 
 
-        createStorageImage_RT();
         createCommandPool();
+        createStorageImage_RT();
         createCamera();
 
         loadMeshes();
@@ -119,19 +119,31 @@ void Renderer::drawFrame() {
         throw std::runtime_error("failed to acquire swap chain image!");
     }
 
+    // if that image is being used by another frame, wait on its fence
+    if (inFlightImages[imageIndex] != VK_NULL_HANDLE) {
+        vkWaitForFences(device, 1, &inFlightImages[imageIndex], VK_TRUE, UINT64_MAX);
+    }
+    // mark image as being used by current frames fence
+    inFlightImages[imageIndex] = inFlightFences[currentFrame];
+
     updateUniformBuffer(currentFrame);
 
+    // unsignal
     vkResetFences(device, 1, &inFlightFences[currentFrame]);
 
     vkResetCommandBuffer(commandBuffers[currentFrame], 0);
     if (renderingMode == RENDERING_MODE_RASTERISATION) {
         recordCommandBuffer(commandBuffers[currentFrame], imageIndex); // rasterisation
     } else if (renderingMode == RENDERING_MODE_RAY_TRACING) {
-        raytrace(commandBuffers[currentFrame], imageIndex);                                                     // ray tracing
+        transitionImageLayout(swapChainImages[imageIndex], VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+        raytrace(commandBuffers[currentFrame], imageIndex);            // ray tracing
+        transitionImageLayout(swapChainImages[imageIndex], VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
     }
+
 
     VkSubmitInfo submitInfo{};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+
 
     VkSemaphore waitSemaphores[] = {imageAvailableSemaphores[currentFrame]};
     VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
@@ -141,14 +153,12 @@ void Renderer::drawFrame() {
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &commandBuffers[currentFrame];
 
-    VkSemaphore signalSemaphores[] = {renderFinishedSemaphores[currentFrame]};
+    VkSemaphore signalSemaphores[] = {renderFinishedSemaphores[imageIndex]};
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = signalSemaphores;
 
-    VkResult result = vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]);
-    if (result != VK_SUCCESS) {
-        std::cerr << "vkQueueSubmit failed: " << result << std::endl;
-        throw std::runtime_error("failed submitting to queue");
+    if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]) != VK_SUCCESS) {
+        throw std::runtime_error("vkQueueSubmit failed!");
     }
 
     VkPresentInfoKHR presentInfo{};
@@ -1824,8 +1834,10 @@ void Renderer::raytrace(VkCommandBuffer cmdBuf, uint32_t imageIndex) {
 
 void Renderer::createSyncObjects() {
     imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
-    renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+    //renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+    renderFinishedSemaphores.resize(swapChainImages.size());
     inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
+    inFlightImages.resize(swapChainImages.size(), VK_NULL_HANDLE);
 
     VkSemaphoreCreateInfo semaphoreInfo{};
     semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -1840,7 +1852,13 @@ void Renderer::createSyncObjects() {
             || vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS
             || vkCreateFence(device, &fenceInfo, nullptr, &inFlightFences[i]) != VK_SUCCESS
         ) {
-            throw std::runtime_error("failed creating synchronisation objects");
+            throw std::runtime_error("failed creating sync objects (frame)");
+        }
+    }
+
+    for (int i = 0; i < renderFinishedSemaphores.size(); i++) {
+        if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS) {
+            throw std::runtime_error("failed creating renderFinished semaphore");
         }
     }
 }
@@ -2073,16 +2091,28 @@ void Renderer::transitionImageLayout(VkImage image, VkFormat format, VkImageLayo
 
         sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
         destinationStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    } else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_GENERAL) {
+        // this transition is only meant for ray tracing
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+
+        sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT; // no stage yet hence top of pipeline
+        destinationStage = VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR;
+    } else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR) {
+        barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        barrier.dstAccessMask = 0;
+
+        sourceStage = VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR;
+        destinationStage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT; // presentations happens outside of the pipeline
     } else {
         throw std::invalid_argument("unsupported layout transition!");
     }
 
     vkCmdPipelineBarrier(
     commandBuffer,
-    VK_PIPELINE_STAGE_TRANSFER_BIT,
-    VK_ACCESS_TRANSFER_WRITE_BIT,
-    0,
-    0, nullptr,
+    sourceStage, destinationStage,
+    0, 0,
+    nullptr,
     0, nullptr,
     1, &barrier
     );
@@ -2147,12 +2177,14 @@ void Renderer::createColorResources() {
 
 void Renderer::createStorageImage_RT() {
     createImage(swapChainExtent.width, swapChainExtent.height,
-        msaaSamples, VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_TILING_OPTIMAL,
+        VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_TILING_OPTIMAL,
         VK_IMAGE_USAGE_STORAGE_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         storageImage_RT, storageImageMemory_RT
         );
 
     storageImageView_RT = createImageView(storageImage_RT, VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT);
+
+    transitionImageLayout(storageImage_RT, VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
 }
 
 

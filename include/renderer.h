@@ -171,6 +171,7 @@ private:
     std::vector<VkSemaphore> imageAvailableSemaphores;
     std::vector<VkSemaphore> renderFinishedSemaphores;
     std::vector<VkFence> inFlightFences;
+    std::vector<VkFence> inFlightImages;
 
     std::vector<Mesh> meshes;
     std::vector<MeshInfo> meshesInfo;
