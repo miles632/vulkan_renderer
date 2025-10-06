@@ -3,6 +3,8 @@
 #include "blas.h"
 #include "hitinfo.h"
 #include "tlas.h"
+#include "host_device.h"
+
 
 VkResult CreateDebugUtilsMessengerEXT(
     VkInstance instance,
@@ -64,6 +66,7 @@ void Renderer::initVulkan() {
 
         createCommandPool();
         createStorageImage_RT();
+        createDstImage_RT();
         createCamera();
 
         loadMeshes();
@@ -135,9 +138,9 @@ void Renderer::drawFrame() {
     if (renderingMode == RENDERING_MODE_RASTERISATION) {
         recordCommandBuffer(commandBuffers[currentFrame], imageIndex); // rasterisation
     } else if (renderingMode == RENDERING_MODE_RAY_TRACING) {
-        transitionImageLayout(swapChainImages[imageIndex], VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+        //transitionImageLayout(swapChainImages[imageIndex], VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
         raytrace(commandBuffers[currentFrame], imageIndex);            // ray tracing
-        transitionImageLayout(swapChainImages[imageIndex], VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        //transitionImageLayout(swapChainImages[imageIndex], VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
     }
 
 
@@ -722,7 +725,7 @@ void Renderer::createSwapChain() {
     createInfo.imageColorSpace = surfaceFormat.colorSpace;
     createInfo.imageExtent = extent;
     createInfo.imageArrayLayers = 1;
-    createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 
     QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
     uint32_t queueFamilyIndices[] = {indices.graphicsFamily.value(), indices.presentFamily.value()};
@@ -1098,10 +1101,12 @@ void Renderer::createPipeline_RT() {
     auto rgenShaderCode = readFile("shaders/rgen.spv");
     auto rchitShaderCode = readFile("shaders/rchit.spv");
     auto rmissShaderCode = readFile("shaders/rmiss.spv");
+    auto copyToSwapchainCode = readFile("shaders/copy.spv");
 
     VkShaderModule rgenModule = createShaderModule(rgenShaderCode);
     VkShaderModule rchitModule = createShaderModule(rchitShaderCode);
     VkShaderModule rmissModule = createShaderModule(rmissShaderCode);
+    VkShaderModule copyModule = createShaderModule(copyToSwapchainCode);
 
     VkPipelineShaderStageCreateInfo rgenStageInfo{};
     rgenStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -1122,7 +1127,6 @@ void Renderer::createPipeline_RT() {
     missStageInfo.pName = "main";
 
     std::array<VkPipelineShaderStageCreateInfo, 3> shaderStages = {rgenStageInfo, chitStageInfo, missStageInfo};
-
 
     VkRayTracingShaderGroupCreateInfoKHR raygenGroup{};
     raygenGroup.sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
@@ -1156,7 +1160,7 @@ void Renderer::createPipeline_RT() {
                             VK_SHADER_STAGE_MISS_BIT_KHR |
                             VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
     pcRange.offset = 0;
-    pcRange.size = sizeof(PushConstants);
+    pcRange.size = sizeof(vk_device::PushConstants);
 
     VkPipelineLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -1190,9 +1194,40 @@ void Renderer::createPipeline_RT() {
         throw std::runtime_error("failed creating graphics pipeline");
     }
 
+    VkPipelineShaderStageCreateInfo copyToSwapchainInfo{};
+    copyToSwapchainInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    copyToSwapchainInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    copyToSwapchainInfo.module = copyModule;
+    copyToSwapchainInfo.pName = "main";
+
+    VkPipelineLayoutCreateInfo computeLayoutInfo{};
+    computeLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    computeLayoutInfo.setLayoutCount = 1;
+    computeLayoutInfo.pSetLayouts = &descriptorSetLayout;
+    computeLayoutInfo.pushConstantRangeCount = 0;
+    computeLayoutInfo.pPushConstantRanges = nullptr;
+
+    if (vkCreatePipelineLayout(device, &computeLayoutInfo, nullptr, &computePipelineLayout_RT) != VK_SUCCESS) {
+        throw std::runtime_error("failed creating compute pipeline");
+    }
+
+    VkComputePipelineCreateInfo computePipelineInfo{};
+    computePipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    computePipelineInfo.pNext = nullptr;
+    computePipelineInfo.flags = 0;
+    computePipelineInfo.stage = copyToSwapchainInfo;
+    computePipelineInfo.layout = computePipelineLayout_RT;
+    computePipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
+
+    if (vkCreateComputePipelines(device, VK_NULL_HANDLE, 1,
+        &computePipelineInfo, nullptr, &computePipeline_RT) != VK_SUCCESS) {
+        throw std::runtime_error("failed creating compute pipeline");
+    }
+
     vkDestroyShaderModule(device, rchitModule, nullptr);
     vkDestroyShaderModule(device, rgenModule, nullptr);
     vkDestroyShaderModule(device, rmissModule, nullptr);
+    vkDestroyShaderModule(device, copyModule, nullptr);
 }
 
 
@@ -1370,6 +1405,10 @@ void Renderer::createDescriptorSet_RT() {
         storageImageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
         storageImageInfo.sampler = VK_NULL_HANDLE;
 
+        VkDescriptorImageInfo dstImageInfo{};
+        dstImageInfo.imageView = dstImageView_RT;
+        dstImageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        dstImageInfo.sampler = VK_NULL_HANDLE;
 
         VkDescriptorBufferInfo storageBufInfoVertex{};
         storageBufInfoVertex.buffer = vertexBuffer;
@@ -1400,11 +1439,21 @@ void Renderer::createDescriptorSet_RT() {
         writeStorageImage.pImageInfo = &storageImageInfo;
         writeStorageImage.pNext = nullptr;
 
+        VkWriteDescriptorSet writeDstImage;
+        writeDstImage.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writeDstImage.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writeDstImage.dstSet = descriptorSets[i];
+        writeDstImage.dstBinding = 2;
+        writeDstImage.descriptorCount = 1;
+        writeDstImage.dstArrayElement = 0;
+        writeDstImage.pImageInfo = &dstImageInfo;
+        writeDstImage.pNext = nullptr;
+
         VkWriteDescriptorSet writeUBO;
         writeUBO.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writeUBO.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         writeUBO.dstSet = descriptorSets[i];
-        writeUBO.dstBinding = 2;
+        writeUBO.dstBinding = 3;
         writeUBO.descriptorCount = 1;
         writeUBO.dstArrayElement = 0;
         writeUBO.pBufferInfo = &UBOInfo;
@@ -1414,7 +1463,7 @@ void Renderer::createDescriptorSet_RT() {
         writeStorageHitVertex.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writeStorageHitVertex.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         writeStorageHitVertex.dstSet = descriptorSets[i];
-        writeStorageHitVertex.dstBinding = 3;
+        writeStorageHitVertex.dstBinding = 4;
         writeStorageHitVertex.descriptorCount = 1;
         writeStorageHitVertex.dstArrayElement = 0;
         writeStorageHitVertex.pBufferInfo = &storageBufInfoVertex;
@@ -1424,20 +1473,21 @@ void Renderer::createDescriptorSet_RT() {
         writeStorageHitIndex.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writeStorageHitIndex.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         writeStorageHitIndex.dstSet = descriptorSets[i];
-        writeStorageHitIndex.dstBinding = 4;
+        writeStorageHitIndex.dstBinding = 5;
         writeStorageHitIndex.descriptorCount = 1;
         writeStorageHitIndex.dstArrayElement = 0;
         writeStorageHitIndex.pBufferInfo = &storageBufInfoIndex;
         writeStorageHitIndex.pNext = nullptr;
 
         // TODO: add sampling
-        std::array<VkWriteDescriptorSet, 5> descriptorWrites;
+        std::array<VkWriteDescriptorSet, 6> descriptorWrites;
 
         descriptorWrites[0] = writeAccelStr;
         descriptorWrites[1] = writeStorageImage;
-        descriptorWrites[2] = writeUBO;
-        descriptorWrites[3] = writeStorageHitVertex;
-        descriptorWrites[4] = writeStorageHitIndex;
+        descriptorWrites[2] = writeDstImage;
+        descriptorWrites[3] = writeUBO;
+        descriptorWrites[4] = writeStorageHitVertex;
+        descriptorWrites[5] = writeStorageHitIndex;
 
         vkUpdateDescriptorSets(
             device,
@@ -1455,12 +1505,13 @@ void Renderer::createDescriptorSetLayout_RT() {
        second for output image and the ubo*/
     std::vector<VkDescriptorSetLayoutBinding> bindings = {
     { 0, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR},
-    { 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR},
-        { 2, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR},
+    { 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_COMPUTE_BIT},
+        {2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT}, // dst image that gets copied into swapchain
+        { 3, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR},
         // will only use closest hit right now
-        { 3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR}, // vertex
-        { 4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR}, // index
-        { 5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR}
+        { 4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR}, // vertex
+        { 5, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR}, // index
+        { 6, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR}
     };
 
     VkDescriptorSetLayoutCreateInfo layoutCreateInfo{};
@@ -1479,6 +1530,7 @@ void Renderer::createDescriptorPool_RT() {
     std::vector<VkDescriptorPoolSize> poolSizes = {
         {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR , MAX_FRAMES_IN_FLIGHT},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, MAX_FRAMES_IN_FLIGHT},
+            {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, MAX_FRAMES_IN_FLIGHT},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, MAX_FRAMES_IN_FLIGHT},
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, MAX_FRAMES_IN_FLIGHT},
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, MAX_FRAMES_IN_FLIGHT},
@@ -1811,23 +1863,63 @@ void Renderer::raytrace(VkCommandBuffer cmdBuf, uint32_t imageIndex) {
         0, 1, descriptorSets.data(),
         0, nullptr);
 
-    PushConstants pc{};
+    vk_device::PushConstants pc{};
     pc.viewInverse = glm::inverse(camera.getViewMatrix());
-    pc.projInverse = glm::inverse(glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float) swapChainExtent.height, 0.1f, 50.0f));
+    pc.projInverse = glm::inverse(glm::perspective(glm::radians(45.0f),
+        swapChainExtent.width / (float) swapChainExtent.height, 0.1f, 50.0f));
     pc.cameraPos = camera.pos;
     pc.frameIndex = imageIndex;
 
-
-    vkCmdPushConstants(cmdBuf, pipelineLayout, VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_MISS_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, 0, sizeof(PushConstants), &pc);
+    vkCmdPushConstants(cmdBuf, pipelineLayout, VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_MISS_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR,
+        0, sizeof(vk_device::PushConstants), &pc);
 
     VkStridedDeviceAddressRegionKHR callableSBT{};
     callableSBT.deviceAddress = 0;
     callableSBT.size = 0;
     callableSBT.stride = 0;
 
+    VkImageSubresourceLayers subresourceLayers{};
+    subresourceLayers.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    subresourceLayers.baseArrayLayer = 0;
+    subresourceLayers.mipLevel = 0;
+    subresourceLayers.layerCount = 1;
+
+    VkExtent3D extent;
+    extent.depth = 1;
+    extent.height = HEIGHT;
+    extent.width = WIDTH;
+
+    VkImageCopy imageCopy{};
+    imageCopy.srcOffset = {0,0,0};
+    imageCopy.dstOffset = { 0,0,0};
+    imageCopy.srcSubresource = subresourceLayers;
+    imageCopy.dstSubresource = subresourceLayers;
+    imageCopy.extent = extent;
+
     pfnCmdTraceRaysKHR(
     cmdBuf, &rgenRegion, &missRegion, &chitRegion,
     &callableSBT, WIDTH, HEIGHT, 1);
+
+    vkCmdBindPipeline(cmdBuf, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline_RT);
+    vkCmdBindDescriptorSets(cmdBuf, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout_RT,
+        0, 1, descriptorSets.data(), 0, nullptr);
+
+
+    //with 8 being the local size x and y of the compute shader
+    uint32_t x = ceil(WIDTH / 8);
+    uint32_t y = ceil(HEIGHT / 8);
+    uint32_t z = 1;
+
+    vkCmdDispatch(cmdBuf, x, y, z);
+
+    transitionImageLayout(dstImage_RT, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, cmdBuf);
+    transitionImageLayout(swapChainImages[imageIndex], VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, cmdBuf);
+
+    vkCmdCopyImage(cmdBuf, dstImage_RT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        swapChainImages[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imageCopy);
+
+    transitionImageLayout(swapChainImages[imageIndex], VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, cmdBuf);
+    transitionImageLayout(dstImage_RT, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, cmdBuf);
 
     vkEndCommandBuffer(cmdBuf);
 }
@@ -2052,8 +2144,14 @@ void Renderer::copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width,
     endSingleTimeCommands(commandBuffer);
 }
 
-void Renderer::transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout) {
-    VkCommandBuffer commandBuffer = beginSingleTimeCommands();
+void Renderer::transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout, VkCommandBuffer cmdBuf) {
+
+    bool tag = false; // bit messy to do this but this function needs to be available in contexts where there is already
+                        // a command buffer being submitted upwards in the call stack, such as raytrace()
+    if (cmdBuf == VK_NULL_HANDLE) {
+        cmdBuf = beginSingleTimeCommands();
+        tag = true;
+    }
 
     VkImageMemoryBarrier barrier{};
     barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -2092,24 +2190,59 @@ void Renderer::transitionImageLayout(VkImage image, VkFormat format, VkImageLayo
         sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
         destinationStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
     } else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_GENERAL) {
-        // this transition is only meant for ray tracing
         barrier.srcAccessMask = 0;
         barrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
 
         sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT; // no stage yet hence top of pipeline
         destinationStage = VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR;
     } else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR) {
-        barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         barrier.dstAccessMask = 0;
 
         sourceStage = VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR;
         destinationStage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT; // presentations happens outside of the pipeline
+    } else if (oldLayout == VK_IMAGE_LAYOUT_GENERAL && newLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR) {
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = 0;
+
+        sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        destinationStage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+    } else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+
+        sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    } else if (oldLayout == VK_IMAGE_LAYOUT_GENERAL && newLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
+        barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+
+        sourceStage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+        destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    } else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+        sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    } else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR) {
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = 0;
+
+        sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        destinationStage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+    } else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_GENERAL) {
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
+
+        sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        destinationStage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
     } else {
         throw std::invalid_argument("unsupported layout transition!");
     }
 
     vkCmdPipelineBarrier(
-    commandBuffer,
+    cmdBuf,
     sourceStage, destinationStage,
     0, 0,
     nullptr,
@@ -2118,7 +2251,9 @@ void Renderer::transitionImageLayout(VkImage image, VkFormat format, VkImageLayo
     );
 
 
-    endSingleTimeCommands(commandBuffer);
+    if (tag) {
+        endSingleTimeCommands(cmdBuf);
+    }
 }
 
 VkFormat Renderer::findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features) {
@@ -2186,6 +2321,19 @@ void Renderer::createStorageImage_RT() {
 
     transitionImageLayout(storageImage_RT, VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
 }
+
+void Renderer::createDstImage_RT() {
+    createImage(swapChainExtent.width, swapChainExtent.height,
+        VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL,
+        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        dstImage_RT, dstImageMemory_RT
+        );
+
+    dstImageView_RT = createImageView(dstImage_RT, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT);
+
+    transitionImageLayout(dstImage_RT, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+}
+
 
 
 void Renderer::loadMeshes() {

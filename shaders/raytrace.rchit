@@ -14,10 +14,10 @@ rayPayloadInEXT hitPayload ray;
 
 layout(push_constant) uniform _PushConstants { PushConstants pc; };
 
-layout(binding = 3) readonly buffer VertexArray {
+layout(binding = 4) readonly buffer VertexArray {
     Vertex v[];
 } vertices;
-layout(binding = 4) readonly buffer IndexArray {
+layout(binding = 5) readonly buffer IndexArray {
     uint i[];
 } indices;
 

@@ -148,6 +148,8 @@ private:
     VkPipelineLayout pipelineLayout;
     VkRenderPass renderPass;
     VkPipeline graphicsPipeline;
+    VkPipelineLayout computePipelineLayout_RT;
+    VkPipeline computePipeline_RT;
 
     VkCommandPool commandPool;
     std::vector<VkCommandBuffer> commandBuffers;
@@ -208,6 +210,10 @@ private:
     VkImageView storageImageView_RT;
     VkDeviceMemory storageImageMemory_RT;
     VkImage storageImage_RT;
+
+    VkImageView dstImageView_RT;
+    VkDeviceMemory dstImageMemory_RT;
+    VkImage dstImage_RT;
 
     VkBuffer sbtBuffer;
     VkDeviceMemory sbtBufferMemory;
@@ -322,7 +328,7 @@ private:
         );
     void createImageViews();
     void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
-    void transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout);
+    void transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout, VkCommandBuffer cmdBuf = VK_NULL_HANDLE);
 
     VkFormat findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features);
 
@@ -333,6 +339,7 @@ private:
     void createColorResources();
 
     void createStorageImage_RT();
+    void createDstImage_RT();
 
     void createAccelerationStructures();
 
