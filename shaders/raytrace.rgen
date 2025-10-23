@@ -4,6 +4,7 @@
 
 #include "raycommon.glsl"
 #include "host_device.h"
+#include "random.glsl"
 
 layout(binding = 0, set = 0) uniform accelerationStructureEXT tlas;
 layout(binding = 1, rgba32f) uniform image2D outputImage;
@@ -13,34 +14,74 @@ layout(push_constant) uniform _PushConstants { PushConstants pc; };
 layout(location = 0) rayPayloadEXT hitPayload payload;
 
 void main() {
-	const vec2 pixelCenter = vec2(gl_LaunchIDEXT.xy) + 0.5;
-	const vec2 resolution = vec2(gl_LaunchSizeEXT.xy);
-	const vec2 uv = pixelCenter / resolution;
-	vec2 d = uv * 2.0 - 1.0;
+    const ivec2 pix = ivec2(gl_LaunchIDEXT.xy);
+    const vec2 resolution = vec2(gl_LaunchSizeEXT.xy);
 
-	vec3 origin = (pc.viewInverse * vec4(0,0,0,1)).xyz; 	// the latter being the camera view
-																// in view space
-	vec4 target = pc.projInverse * vec4(d.x, d.y, 1, 1);
-	//vec3 dir = pc.viewInverse * vec4(normalize(target.xyz), 0)).xyz;
-	vec3 dir = normalize((pc.viewInverse * vec4(target.xyz, 0)).xyz);
+    uint pixelRandomSeed = hash(vec2(gl_LaunchIDEXT.xy));
+    payload.RandomSeed = pixelRandomSeed;
 
-	uint rayFlags = gl_RayFlagsOpaqueEXT;
-	float rayMin = 0.001;
-	float rayMax = 10000.0;
+    vec3 accumColor = vec3(0.0);
 
-	traceRayEXT(
-		tlas,		// accel struct
-		rayFlags,	//
-		0xFF,		// cullMask
-		0, 			// sbtRecordOffset
-		0,			// sbtRecordStride
-		0,			// missIndex
-		origin, 	//
-		rayMin,		// ray min range
-		dir,		// ray direction
-		rayMax, 	// ray max range
-		0			// payload at location 0
-	);
+    const uint NUM_SAMPLES = 1u;
 
-	imageStore(outputImage, ivec2(gl_LaunchIDEXT.xy), vec4(payload.Color, 1.0));
+    for (uint s = 0u; s < NUM_SAMPLES; ++s) {
+        // centre of pixel
+        vec2 pixelSample = vec2(gl_LaunchIDEXT.xy) + vec2(0.5);
+
+        vec2 ndc = (pixelSample / resolution) * 2.0 - 1.0;
+
+        // build eye ray: proper inverse projection -> divide by w
+        vec4 target = pc.projInverse * vec4(ndc.x, ndc.y, 1.0, 1.0);
+        target /= target.w;
+        // transform to world
+        vec3 dir = normalize((pc.viewInverse * vec4(target.xyz, 0.0)).xyz);
+        vec3 origin = (pc.viewInverse * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+
+        const int MAX_BOUNCES = 2;
+        vec3 throughput = vec3(1.0);
+        vec3 radiance = vec3(0.0);
+
+        for (int bounce = 0; bounce <= MAX_BOUNCES; ++bounce) {
+            payload.ColorAndDistance = vec4(0.0);
+            payload.ScatterDir = vec4(0.0);
+
+            float tmin = 0.001;
+            float tmax = 1e4;
+
+            traceRayEXT(
+                tlas,
+                gl_RayFlagsOpaqueEXT,
+                0xFF,
+                0u,    // sbtRecordOffset
+                0u,    // sbtRecordStride
+                0u,    // missIndex
+                origin, tmin, dir, tmax, 0
+            );
+
+            vec3 hitCol = payload.ColorAndDistance.rgb;
+            float t = payload.ColorAndDistance.w;
+            bool scattered = payload.ScatterDir.w > 0.0;
+
+            // accumulate contribution from hit
+            radiance += throughput * hitCol;
+
+            if (t < 0.0 || !scattered) {
+                // miss or termination
+                break;
+            }
+
+            // advance origin and set the new direction with the scatter
+            origin = origin + t * dir;
+            dir = normalize(payload.ScatterDir.xyz);
+
+            throughput *= 0.8;
+        }
+
+        accumColor += radiance;
+    }
+
+    vec3 finalColor = accumColor / float(NUM_SAMPLES);
+    finalColor = sqrt(finalColor);
+
+    imageStore(outputImage, ivec2(gl_LaunchIDEXT.xy), vec4(finalColor, 1.0));
 }

@@ -1,5 +1,5 @@
 #ifdef __cplusplus
-    #include <glm/glm.hpp>
+#include <glm/glm.hpp>
     #define VEC2 glm::vec2
     #define VEC3 glm::vec3
     #define VEC4 glm::vec4
@@ -21,13 +21,16 @@ struct Vertex {
     VEC3 pos;
     VEC3 color;
     VEC2 tex;
+    VEC3 normal;
 };
 
+/*
 struct UniformBufferObject {
     MAT4 model;
     MAT4 view;
     MAT4 proj;
 };
+*/
 
 struct PushConstants {
     MAT4 viewInverse;
@@ -38,6 +41,7 @@ struct PushConstants {
     VEC3 lightPos;
     float lightIntensity;
     int lightType;
+    uint frameCount;
 };
 
 NS_END

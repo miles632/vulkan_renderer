@@ -162,6 +162,10 @@ private:
     VkDeviceMemory indexBufferMemory;
     VkDeviceAddress indexBufferAddress;
 
+    VkBuffer offsetBuffer;
+    VkDeviceMemory offsetBufferMemory;
+    VkDeviceAddress offsetBufferAddress;
+
     std::vector<VkBuffer> uniformBuffers;
     std::vector<VkDeviceMemory> uniformBuffersMemory;
     std::vector<void*> uniformBuffersMapped;
@@ -177,6 +181,8 @@ private:
 
     std::vector<Mesh> meshes;
     std::vector<MeshInfo> meshesInfo;
+
+    std::vector<glm::uvec2> offsets;
 
     // uninitialized for now
     VkImage textureImage;
@@ -203,6 +209,7 @@ private:
     Camera camera;
 
     float lastFrameT = 0.0f;
+    uint frameCount = 0;
 
     Tlas tlas;
     Blas blas;
@@ -268,6 +275,7 @@ private:
 
     void createVertexBuffer();
     void createIndexBuffer();
+    void createOffsetBuffer();
 
 public:
     void createBuffer(VkDeviceSize size, VkBufferUsageFlags usageFlags, VkMemoryPropertyFlags propertyFlags, VkBuffer& buffer, VkDeviceMemory& bufferMemory);

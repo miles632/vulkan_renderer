@@ -2,9 +2,9 @@
 #define COMMON_GLSL
 
 struct hitPayload {
-    vec3 Color;
-    uint Distance;
+    vec4 ColorAndDistance;
     vec4 ScatterDir;
+    uint RandomSeed;
 };
 
 #endif
