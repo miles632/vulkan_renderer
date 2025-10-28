@@ -7,39 +7,46 @@
 #include "random.glsl"
 
 layout(binding = 0, set = 0) uniform accelerationStructureEXT tlas;
-layout(binding = 1, rgba32f) uniform image2D outputImage;
+layout(binding = 1, rgba32f) uniform image2D accumulationImage;
+layout(binding = 2, rgba8) uniform image2D presentImage;
 
 layout(push_constant) uniform _PushConstants { PushConstants pc; };
 
 layout(location = 0) rayPayloadEXT hitPayload payload;
 
 void main() {
-    const ivec2 pix = ivec2(gl_LaunchIDEXT.xy);
+    const ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
     const vec2 resolution = vec2(gl_LaunchSizeEXT.xy);
 
     uint pixelRandomSeed = hash(vec2(gl_LaunchIDEXT.xy));
+    pixelRandomSeed ^= pc.frameIndex;
     payload.RandomSeed = pixelRandomSeed;
 
-    vec3 accumColor = vec3(0.0);
+    vec3 pixelColor = vec3(0.0);
+    const uint NUM_SAMPLES = 32u;
 
-    const uint NUM_SAMPLES = 1u;
+    const float aperture = 0.0005;
+    const float focusDistance = 0.5;
 
     for (uint s = 0u; s < NUM_SAMPLES; ++s) {
         // centre of pixel
-        vec2 pixelSample = vec2(gl_LaunchIDEXT.xy) + vec2(0.5);
+        //const vec2 pixelSample = vec2(gl_LaunchIDEXT.x + randomFloat(payload.RandomSeed), gl_LaunchIDEXT.y + randomFloat(payload.RandomSeed));
+        float pixelSampleX = float(gl_LaunchIDEXT.x) + randomFloat(payload.RandomSeed);
+        float pixelSampleY = float(gl_LaunchIDEXT.y) + randomFloat(payload.RandomSeed);
+        vec2 pixelSample = vec2(pixelSampleX, pixelSampleY);
 
         vec2 ndc = (pixelSample / resolution) * 2.0 - 1.0;
 
-        // build eye ray: proper inverse projection -> divide by w
+        vec2 offset = aperture * 0.5 * randomUnitInDisk(payload.RandomSeed);
         vec4 target = pc.projInverse * vec4(ndc.x, ndc.y, 1.0, 1.0);
-        target /= target.w;
         // transform to world
-        vec3 dir = normalize((pc.viewInverse * vec4(target.xyz, 0.0)).xyz);
-        vec3 origin = (pc.viewInverse * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+        vec4 dir = normalize((pc.viewInverse *
+             vec4(normalize(target.xyz * focusDistance - vec3(offset, 0.0)), 0.0)));
 
-        const int MAX_BOUNCES = 2;
+        vec4 origin = pc.viewInverse * vec4(offset, 0.0, 1.0);
+
+        const int MAX_BOUNCES = 3;
         vec3 throughput = vec3(1.0);
-        vec3 radiance = vec3(0.0);
 
         for (int bounce = 0; bounce <= MAX_BOUNCES; ++bounce) {
             payload.ColorAndDistance = vec4(0.0);
@@ -48,6 +55,11 @@ void main() {
             float tmin = 0.001;
             float tmax = 1e4;
 
+            if (bounce == MAX_BOUNCES) {
+                throughput = vec3(0,0,0);
+                break;
+            }
+
             traceRayEXT(
                 tlas,
                 gl_RayFlagsOpaqueEXT,
@@ -55,7 +67,7 @@ void main() {
                 0u,    // sbtRecordOffset
                 0u,    // sbtRecordStride
                 0u,    // missIndex
-                origin, tmin, dir, tmax, 0
+                origin.xyz, tmin, dir.xyz, tmax, 0
             );
 
             vec3 hitCol = payload.ColorAndDistance.rgb;
@@ -63,7 +75,7 @@ void main() {
             bool scattered = payload.ScatterDir.w > 0.0;
 
             // accumulate contribution from hit
-            radiance += throughput * hitCol;
+            throughput *= hitCol;
 
             if (t < 0.0 || !scattered) {
                 // miss or termination
@@ -72,16 +84,22 @@ void main() {
 
             // advance origin and set the new direction with the scatter
             origin = origin + t * dir;
-            dir = normalize(payload.ScatterDir.xyz);
-
-            throughput *= 0.8;
+            dir = normalize(payload.ScatterDir);
         }
 
-        accumColor += radiance;
+        pixelColor += throughput;
     }
 
-    vec3 finalColor = accumColor / float(NUM_SAMPLES);
-    finalColor = sqrt(finalColor);
+    pixelColor /= float(NUM_SAMPLES); // average the samples for this frame
 
-    imageStore(outputImage, ivec2(gl_LaunchIDEXT.xy), vec4(finalColor, 1.0));
+    const bool accumulate = pc.frameIndex != 0;
+    const vec3 accumulatedColor = (accumulate ? imageLoad(accumulationImage, ivec2(gl_LaunchIDEXT.xy)) : vec4(0)).rgb + pixelColor;
+
+    pixelColor = accumulatedColor / float(pc.frameIndex+1);
+    pixelColor = sqrt(pixelColor);
+
+    imageStore(accumulationImage, ivec2(gl_LaunchIDEXT.xy), vec4(accumulatedColor, 1.0));
+    // swizzling here because the swapchain image in vulkan is transitioned to BGRA8
+    imageStore(presentImage, ivec2(gl_LaunchIDEXT.xy), vec4(pixelColor.b, pixelColor.g, pixelColor.r, 1.0));
+
 }

@@ -10,5 +10,6 @@ layout(location = 0) rayPayloadInEXT hitPayload payload;
 layout(push_constant) uniform _PushConstants { PushConstants pc; };
 
 void main() {
-    payload.Color = pc.clearColor.xyz * 0.8;
+    payload.ColorAndDistance = vec4(pc.clearColor.xyz, -1);
+    payload.ScatterDir = vec4(0.0);
 }

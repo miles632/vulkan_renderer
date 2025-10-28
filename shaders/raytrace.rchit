@@ -10,12 +10,12 @@
 #include "scatter.glsl"
 
 hitAttributeEXT vec2 attribs;
-layout(location = 0) rayPayloadInEXT hitPayload payload;
+rayPayloadInEXT hitPayload payload;
 
 layout(push_constant) uniform _PushConstants { PushConstants pc; };
 
 layout(binding = 4) readonly buffer VertexArray {
-    Vertex v[];
+    float v[];
 } vertices;
 layout(binding = 5) readonly buffer IndexArray {
     uint i[];
@@ -29,18 +29,26 @@ vec3 Mix(vec3 a, vec3 b, vec3 c, vec3 barycentrics)
     return a * barycentrics.x + b * barycentrics.y + c * barycentrics.z;
 }
 
+Vertex UnpackVertex(uint baseIndex) {
+    const uint VERTEX_STRIDE = 11; // 11 floats are stored per vertex
+    const uint base = baseIndex * VERTEX_STRIDE;
+    Vertex v;
+    v.pos   = vec3(vertices.v[base + 0], vertices.v[base + 1], vertices.v[base + 2]);
+    v.color = vec3(vertices.v[base + 3], vertices.v[base + 4], vertices.v[base + 5]);
+    v.tex   = vec2(vertices.v[base + 6], vertices.v[base + 7]);
+    v.normal = vec3(vertices.v[base + 8], vertices.v[base+9], vertices.v[base + 10]);
+
+    return v;
+}
+
 void main() {
     const uvec2 offs = offsets.o[gl_InstanceCustomIndexEXT];
-    const uint indexOffsets = offs.y;
-    const uint vertexOffsets = offs.x;
+    const uint indexOffset = offs.x;
+    const uint vertexOffset = offs.y;
 
-    uint i0 = indices.i[indexOffsets + gl_PrimitiveID * 3 + 0];
-    uint i1 = indices.i[indexOffsets + gl_PrimitiveID * 3 + 1];
-    uint i2 = indices.i[indexOffsets + gl_PrimitiveID * 3 + 2];
-
-    Vertex v0 = vertices.v[vertexOffsets + i0];
-    Vertex v1 = vertices.v[vertexOffsets + i1];
-    Vertex v2 = vertices.v[vertexOffsets + i2];
+    Vertex v0 = UnpackVertex(vertexOffset + indices.i[indexOffset + gl_PrimitiveID * 3 + 0]);
+    Vertex v1 = UnpackVertex(vertexOffset + indices.i[indexOffset + gl_PrimitiveID * 3 + 1]);
+    Vertex v2 = UnpackVertex(vertexOffset + indices.i[indexOffset + gl_PrimitiveID * 3 + 2]);
 
     vec3 barycentrics = vec3(1.0 - attribs.x - attribs.y, attribs.x, attribs.y);
 
@@ -49,5 +57,5 @@ void main() {
         )
     );
 
-    payload = scatterLambertian(normal, gl_WorldRayDirectionEXT, gl_HitTEXT, payload.RandomSeed);
+    payload = scatterMetallic(normal, gl_WorldRayDirectionEXT, gl_HitTEXT, payload.RandomSeed);
 }

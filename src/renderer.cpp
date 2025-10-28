@@ -6,6 +6,7 @@
 #include "hitinfo.h"
 #include "tlas.h"
 #include "host_device.h"
+#include "vertex.h"
 
 
 VkResult CreateDebugUtilsMessengerEXT(
@@ -794,30 +795,47 @@ void Renderer::createImageViews() {
         swapChainImageViews[i] = createImageView(swapChainImages[i], swapChainImageFormat);
     }
 }
+
+
 void Renderer::createVertexBuffer() {
-    for (auto& mesh : meshes) {
-        for (auto& v : mesh.vertices) {
-            v.normal = glm::vec3(0.0f);
-        }
+    std::vector<float> vertexData;
 
-        for (size_t t = 0; t < mesh.indices.size(); t += 3) {}
-    }
+    uint32_t currentVertexOffset = 0;
+    meshesInfo.clear();
 
-    // determine MeshInfo for each mesh, most importantly the vertex offsets
-    uint32_t currentVertexOffset = 0 ;
-    for (int i = 0; i < meshes.size(); i++) {
-        const auto& mesh = meshes[i];
+    for (size_t i = 0; i < meshes.size(); ++i) {
+        auto& mesh = meshes[i];
 
+        // Record mesh info for this mesh
         MeshInfo mInfo;
+        mInfo.indexInto = i;
         mInfo.vertexCount = mesh.vertices.size();
         mInfo.vertexOffsetBytes = currentVertexOffset;
-        mInfo.indexInto = i;
         meshesInfo.push_back(mInfo);
 
-        currentVertexOffset += sizeof(Vertex) * mesh.vertices.size();
+        for (auto& v : mesh.vertices) {
+            vertexData.push_back(v.pos.x);
+            vertexData.push_back(v.pos.y);
+            vertexData.push_back(v.pos.z);
+
+            vertexData.push_back(v.color.x);
+            vertexData.push_back(v.color.y);
+            vertexData.push_back(v.color.z);
+
+            vertexData.push_back(v.tex.x);
+            vertexData.push_back(v.tex.y);
+
+            vertexData.push_back(v.normal.x);
+            vertexData.push_back(v.normal.y);
+            vertexData.push_back(v.normal.z);
+        }
+
+        currentVertexOffset += sizeof(float) * 11 * mesh.vertices.size(); // 11 floats per vertex
     }
 
-    VkDeviceSize bufferSize = (uint64_t)currentVertexOffset;
+    //VkDeviceSize bufferSize = vertexData.size() * sizeof(float);
+    VkDeviceSize bufferSize = currentVertexOffset;
+
 
     VkBuffer stagingBuffer;
     VkDeviceMemory stagingBufferMemory;
@@ -827,37 +845,31 @@ void Renderer::createVertexBuffer() {
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         stagingBuffer,
         stagingBufferMemory
-        );
+    );
 
-    void *data;
-
+    void* data;
     vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
-
-    for (const auto& mInfo : meshesInfo) {
-        const auto& mvert = meshes[mInfo.indexInto].vertices;
-        memcpy(
-            static_cast<char*>(data) + mInfo.vertexOffsetBytes,
-            mvert.data(),
-            mvert.size()*sizeof(Vertex)
-            );
-    }
-
+    memcpy(data, vertexData.data(), bufferSize);
     vkUnmapMemory(device, stagingBufferMemory);
 
     createBuffer(
         bufferSize,
-        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+        VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR |
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         vertexBuffer,
         vertexBufferMemory
-        );
+    );
 
     copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
 
-    VkBufferDeviceAddressInfo bufferAddressInfo{};
-    bufferAddressInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
-    bufferAddressInfo.buffer = vertexBuffer;
-    vertexBufferAddress = pfnGetBufferDeviceAddressKHR(device, &bufferAddressInfo);
+    VkBufferDeviceAddressInfo addrInfo{};
+    addrInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+    addrInfo.buffer = vertexBuffer;
+    vertexBufferAddress = pfnGetBufferDeviceAddressKHR(device, &addrInfo);
 
     vkDestroyBuffer(device, stagingBuffer, nullptr);
     vkFreeMemory(device, stagingBufferMemory, nullptr);
@@ -1242,6 +1254,7 @@ void Renderer::createPipeline_RT() {
         throw std::runtime_error("failed creating graphics pipeline");
     }
 
+    /*
     VkPipelineShaderStageCreateInfo copyToSwapchainInfo{};
     copyToSwapchainInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     copyToSwapchainInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
@@ -1271,6 +1284,7 @@ void Renderer::createPipeline_RT() {
         &computePipelineInfo, nullptr, &computePipeline_RT) != VK_SUCCESS) {
         throw std::runtime_error("failed creating compute pipeline");
     }
+    */
 
     vkDestroyShaderModule(device, rchitModule, nullptr);
     vkDestroyShaderModule(device, rgenModule, nullptr);
@@ -1571,8 +1585,8 @@ void Renderer::createDescriptorSetLayout_RT() {
        second for output image and the ubo*/
     std::vector<VkDescriptorSetLayoutBinding> bindings = {
     { 0, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR},
-    { 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_COMPUTE_BIT},
-        {2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT}, // dst image that gets copied into swapchain
+    { 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR },
+        {2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_RAYGEN_BIT_KHR }, // dst image that gets copied into swapchain
         { 3, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR},
         // will only use closest hit right now
         { 4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR}, // vertex
@@ -1943,12 +1957,10 @@ void Renderer::raytrace(VkCommandBuffer cmdBuf, uint32_t imageIndex) {
 
 
     pc.viewInverse = glm::inverse(camera.getViewMatrix());
-   // pc.projInverse = glm::inverse(glm::perspective(glm::radians(45.0f),
-   //     swapChainExtent.width / (float) swapChainExtent.height, 0.1f, 50.0f));
     pc.projInverse = glm::inverse(proj);
     pc.cameraPos = camera.pos;
     pc.frameIndex = imageIndex;
-    pc.clearColor = glm::vec4(0.5273f,  0.804f, 0.9179f, 1.0f);
+    pc.clearColor = glm::vec4(135/255.0f,  206/255.0f, 235/255.0f, 1.0f);
     pc.frameCount = frameCount;
     pc.lightIntensity = 2.0f;
 
@@ -1982,6 +1994,9 @@ void Renderer::raytrace(VkCommandBuffer cmdBuf, uint32_t imageIndex) {
     cmdBuf, &rgenRegion, &missRegion, &chitRegion,
     &callableSBT, swapChainExtent.width, swapChainExtent.height, 1);
 
+    // compute pipeline not needed since the 8 byte image will be written to in the rgen shader anyway
+    // setup might come in handy later
+    /*
     vkCmdBindPipeline(cmdBuf, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline_RT);
     vkCmdBindDescriptorSets(cmdBuf, VK_PIPELINE_BIND_POINT_COMPUTE, computePipelineLayout_RT,
         0, 1, descriptorSets.data(), 0, nullptr);
@@ -1993,6 +2008,7 @@ void Renderer::raytrace(VkCommandBuffer cmdBuf, uint32_t imageIndex) {
     uint32_t z = 1;
 
     vkCmdDispatch(cmdBuf, x, y, z);
+    */
 
     transitionImageLayout(dstImage_RT, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, cmdBuf);
     transitionImageLayout(swapChainImages[imageIndex], VK_FORMAT_B8G8R8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, cmdBuf);
@@ -2420,7 +2436,7 @@ void Renderer::createDstImage_RT() {
 
 void Renderer::loadMeshes() {
     Mesh cube = Mesh{};
-    loadMesh("meshes/cube.obj", cube);
+    loadMesh("meshes/teapot.obj", cube);
     meshes.push_back(cube);
 }
 
@@ -2437,42 +2453,6 @@ bool Renderer::loadMesh(const std::string& fpath, Mesh& outputMesh) {
 
 
     for (const auto& shape : shapes) {
-        /*
-        for (const auto& index : shape.mesh.indices) {
-            glm::vec3 pos = {
-                attrib.vertices[3 * index.vertex_index + 0], // multiplication by 3 because each vertex is stored
-                attrib.vertices[3 * index.vertex_index + 1], // as 3 floats
-                attrib.vertices[3 * index.vertex_index + 2]
-            };
-
-            glm::vec2 uv = {0.0f, 0.0f};
-            if (index.texcoord_index >= 0) {
-                uv.x = attrib.texcoords[2 * index.texcoord_index + 0];
-                uv.y = 1.0f - attrib.texcoords[2 * index.texcoord_index + 1];
-            }
-
-            glm::vec3 normal = {
-                attrib.normals[3 * index.normal_index + 0],
-                attrib.normals[3 * index.normal_index + 1],
-                attrib.normals[3 * index.normal_index + 2],
-            };
-            //normal = glm::normalize(normal);
-
-            std::string key = std::to_string(pos.x) + "|" + std::to_string(pos.y) + "|" + std::to_string(pos.z) +
-                              "|" + std::to_string(uv.x) + "|" + std::to_string(uv.y)+
-                              "|" + std::to_string(normal.x) + "|" + std::to_string(normal.y) + "|" + std::to_string(normal.z);
-
-
-            if (uniqueVerts.count(key) == 0) {
-                uint32_t newIndex = outputMesh.vertices.size();
-                uniqueVerts[key] = newIndex;
-                // color just white 4 now
-                outputMesh.vertices.push_back(Vertex{pos, glm::vec3(1.0f, 1.0f, 1.0f), uv, normal});
-            }
-
-            outputMesh.indices.push_back(uniqueVerts[key]);
-        }
-        */
 
         for (size_t f = 0; f < shape.mesh.indices.size(); f += 3) {
             // Get vertex positions
@@ -2512,9 +2492,10 @@ bool Renderer::loadMesh(const std::string& fpath, Mesh& outputMesh) {
             uint32_t i1 = i0 + 1;
             uint32_t i2 = i0 + 2;
 
-            outputMesh.vertices.push_back(Vertex{pos0, glm::vec3(1.0f), uv0, faceNormal});
-            outputMesh.vertices.push_back(Vertex{pos1, glm::vec3(1.0f), uv1, faceNormal});
-            outputMesh.vertices.push_back(Vertex{pos2, glm::vec3(1.0f), uv2, faceNormal});
+
+            outputMesh.vertices.push_back(Vertex{.pos = pos0, .color = glm::vec3(1.0f), .tex = uv0, .normal = faceNormal});
+            outputMesh.vertices.push_back(Vertex{.pos = pos1, .color = glm::vec3(1.0f), .tex = uv1, .normal = faceNormal});
+            outputMesh.vertices.push_back(Vertex{.pos = pos2, .color = glm::vec3(1.0f), .tex = uv2, .normal = faceNormal});
 
             outputMesh.indices.push_back(i0);
             outputMesh.indices.push_back(i1);
@@ -2542,7 +2523,7 @@ void Renderer::createAccelerationStructures() {
 
     for (int i = 0; i < 3; ++i)
         for (int j = 0; j < 4; ++j)
-            transform.matrix[i][j] = mat[j][i];
+            transform.matrix[i][j] = mat[i][j];
 
     instance.transform = transform;
     VkAccelerationStructureDeviceAddressInfoKHR blasAddressInfo{};

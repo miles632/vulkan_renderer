@@ -1,6 +1,6 @@
 CC = g++
-CXXFLAGS = -std=c++20 -I/usr/include -I/usr/local/include/glm -Iinclude
-LDFLAGS = -L/usr/lib -lvulkan -lglfw
+CXXFLAGS = -std=c++20 -I/usr/include -I/usr/local/include/glm -Iinclude -I$(VULKAN_SDK)/include
+LDFLAGS = -L/usr/lib -L$(VULKAN_SDK)/lib -lvulkan -lglfw
 
 DEBUG_FLAGS = -g 
 RELEASE_FLAGS = -O0 -Wall -Wshadow #-fsanitize=undefined,address
