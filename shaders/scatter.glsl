@@ -27,7 +27,7 @@ hitPayload scatterSpecular(vec3 normal, vec3 rayDir, const float distance, inout
     hitPayload p;
     // since im not bothering to read color information from vertices and haven't implemented textures yet,
     // i picked an arbitrary color
-    p.ColorAndDistance = vec4(vec3(1.0, 0.843, 0.0), distance);              // use reflection strength as 1 (no diffuse)
+    p.ColorAndDistance = vec4(vec3(1.0, 0.843, 0.0), distance);
     p.ScatterDir = vec4(reflected + 0.001 * randomUnitInSphere(seed), isScattered ? 1.0 : 0.0);
     p.RandomSeed = seed;
     return p;
