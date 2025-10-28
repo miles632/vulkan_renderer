@@ -57,5 +57,5 @@ void main() {
         )
     );
 
-    payload = scatterMetallic(normal, gl_WorldRayDirectionEXT, gl_HitTEXT, payload.RandomSeed);
+    payload = scatterSpecular(normal, gl_WorldRayDirectionEXT, gl_HitTEXT, payload.RandomSeed);
 }
