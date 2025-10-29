@@ -3,7 +3,6 @@
 #include <complex>
 
 #include "blas.h"
-#include "hitinfo.h"
 #include "tlas.h"
 #include "host_device.h"
 #include "vertex.h"
@@ -2436,7 +2435,7 @@ void Renderer::createDstImage_RT() {
 
 void Renderer::loadMeshes() {
     Mesh cube = Mesh{};
-    loadMesh("meshes/teapot.obj", cube);
+    loadMesh("meshes/Dragon_1.obj", cube);
     meshes.push_back(cube);
 }
 
